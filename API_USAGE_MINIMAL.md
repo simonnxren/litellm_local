@@ -1,7 +1,10 @@
 # LiteLLM API Usage
 
-**Gateway**: `http://localhost:8200`  
+**Gateway (Local)**: `http://localhost:8200`  
+**Gateway (LAN)**: `http://<YOUR_IP>:8200` (e.g., `http://192.168.1.100:8200`)  
 **Models**: `qwen3-embedding-0.6b`, `qwen3-8b-fp8`, `hunyuan-ocr`
+
+> **LAN Access**: Services are accessible from any device on your local network. Replace `localhost` with your server's IP address.
 
 ---
 
@@ -10,10 +13,17 @@
 ```python
 import openai
 
+# Local access
 client = openai.OpenAI(
     base_url="http://localhost:8200/v1",
     api_key="dummy"
 )
+
+# LAN access (replace with your server IP)
+# client = openai.OpenAI(
+#     base_url="http://192.168.1.100:8200/v1",
+#     api_key="dummy"
+# )
 
 # Single text
 response = client.embeddings.create(
@@ -29,9 +39,17 @@ response = client.embeddings.create(
 )
 ```
 
-**cURL**:
+**cURL (Local)**:
 ```bash
 curl http://localhost:8200/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-embedding-0.6b", "input": "Your text"}'
+```
+
+**cURL (LAN)**:
+```bash
+# Replace 192.168.1.100 with your server IP
+curl http://192.168.1.100:8200/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{"model": "qwen3-embedding-0.6b", "input": "Your text"}'
 ```

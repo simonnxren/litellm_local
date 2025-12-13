@@ -39,6 +39,43 @@ cp .env.example .env
 
 # 4. Verify
 curl http://localhost:8200/health
+```
+
+## LAN Access
+
+Services are accessible from any device on your local network:
+
+```bash
+# Check network configuration and get your IP
+./network_info.sh
+
+# Or manually get your server IP
+hostname -I | awk '{print $1}'
+
+# Test from another device (replace with your IP)
+curl http://192.168.1.100:8200/health
+```
+
+**Firewall Configuration** (if needed):
+```bash
+# Ubuntu/Debian
+sudo ufw allow 8200/tcp  # LiteLLM Gateway
+sudo ufw allow 8100/tcp  # vLLM Embedding
+sudo ufw allow 8101/tcp  # vLLM Completions
+sudo ufw allow 8102/tcp  # vLLM OCR
+
+# Or allow from specific subnet only
+sudo ufw allow from 192.168.1.0/24 to any port 8200
+```
+
+**Usage from LAN devices**:
+```python
+# Replace localhost with server IP
+client = OpenAI(
+    base_url="http://192.168.1.100:8200/v1",
+    api_key="dummy"
+)
+```
 
 ## Usage
 
