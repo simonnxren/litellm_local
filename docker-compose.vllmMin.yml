@@ -1,8 +1,14 @@
+# Docker Compose - Minimal vLLM Setup
+# 3 services: Embedding, Completions, OCR
+# Optimized for 24GB GPU
+
 services:
   # vLLM Embedding Instance
   vllm-embedding:
     image: vllm/vllm-openai:latest
     container_name: vllm-embedding
+    env_file:
+      - .env
     command: >
       --model ${MODEL_EMBED_NAME}
       --task embed
@@ -47,6 +53,8 @@ services:
   vllm-completions:
     image: vllm/vllm-openai:latest
     container_name: vllm-completions
+    env_file:
+      - .env
     command: >
       --model ${MODEL_COMPLETIONS_NAME}
       --port 8101
@@ -99,6 +107,8 @@ services:
   vllm-ocr:
     image: vllm/vllm-openai:latest
     container_name: vllm-ocr
+    env_file:
+      - .env
     command: >
       --model ${MODEL_OCR_NAME}
       --port 8102

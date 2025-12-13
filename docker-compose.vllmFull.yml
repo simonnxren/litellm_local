@@ -1,3 +1,7 @@
+# Docker Compose - Full vLLM Setup
+# 4 services: Embedding, Completions, OCR, Whisper (audio)
+# Requires more GPU memory or multi-GPU setup
+
 services:
   # vLLM Embedding Instance
   vllm-embedding:

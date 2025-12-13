@@ -1,5 +1,5 @@
-# LiteLLM Proxy Configuration for memoria_vllm
-# This replaces the custom FastAPI router with LiteLLM gateway
+# LiteLLM Proxy Configuration for litellm_local
+# OpenAI-compatible gateway for vLLM inference services
 
 model_list:
   # ============================================================================
@@ -69,61 +69,33 @@ model_list:
       supports_vision: true
 
   # ============================================================================
-  # WHISPER SERVICE (Audio Transcription)
+  # OLLAMA SERVICES (Optional: System Ollama on Host)
+  # Uncomment to use local Ollama instead of vLLM
   # ============================================================================
-  - model_name: whisper-large-v3-turbo
-    litellm_params:
-      model: hosted_vllm/openai/whisper-large-v3-turbo
-      api_base: http://vllm-whisper:8103/v1
-      api_key: "not-needed"
-    model_info:
-      id: whisper-large-v3-turbo
-      mode: audio_transcription
-      supports_function_calling: false
-      supports_vision: false
+  # - model_name: ollama-qwen3-embedding
+  #   litellm_params:
+  #     model: ollama/qwen3-embedding:0.6b
+  #     api_base: http://172.17.0.1:11434
+  #   model_info:
+  #     id: ollama-qwen3-embedding
+  #     mode: embedding
 
-  # Alias for compatibility
-  - model_name: openai/whisper-large-v3-turbo
-    litellm_params:
-      model: hosted_vllm/openai/whisper-large-v3-turbo
-      api_base: http://vllm-whisper:8103/v1
-      api_key: "not-needed"
-    model_info:
-      id: openai/whisper-large-v3-turbo
-      mode: audio_transcription
+  # - model_name: ollama-qwen3-completion
+  #   litellm_params:
+  #     model: ollama/qwen3:8b
+  #     api_base: http://172.17.0.1:11434
+  #   model_info:
+  #     id: ollama-qwen3-completion
+  #     mode: chat
 
-  # ============================================================================
-  # OLLAMA SERVICES (System Ollama on Host)
-  # ============================================================================
-  - model_name: ollama-qwen3-embedding
-    litellm_params:
-      model: ollama/qwen3-embedding:0.6b
-      api_base: http://172.17.0.1:11434
-    model_info:
-      id: ollama-qwen3-embedding
-      mode: embedding
-      supports_function_calling: false
-      supports_vision: false
-
-  - model_name: ollama-qwen3-completion
-    litellm_params:
-      model: ollama/qwen3:8b
-      api_base: http://172.17.0.1:11434
-    model_info:
-      id: ollama-qwen3-completion
-      mode: chat
-      supports_function_calling: false
-      supports_vision: false
-
-  - model_name: ollama-vision
-    litellm_params:
-      model: ollama/deepseek-ocr:3b
-      api_base: http://172.17.0.1:11434
-    model_info:
-      id: ollama-vision
-      mode: chat
-      supports_function_calling: false
-      supports_vision: true
+  # - model_name: ollama-vision
+  #   litellm_params:
+  #     model: ollama/deepseek-ocr:3b
+  #     api_base: http://172.17.0.1:11434
+  #   model_info:
+  #     id: ollama-vision
+  #     mode: chat
+  #     supports_vision: true
 
 # ============================================================================
 # ROUTER SETTINGS

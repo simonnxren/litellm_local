@@ -1,8 +1,14 @@
+# Docker Compose - LiteLLM Gateway
+# OpenAI-compatible API gateway for vLLM services
+# Start this after vLLM services are healthy
+
 services:
   # LiteLLM Gateway (replaces custom FastAPI router)
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: litellm-gateway
+    env_file:
+      - .env
     ports:
       - "0.0.0.0:${ROUTER_PORT:-8200}:4000"
     volumes:

@@ -1,9 +1,17 @@
-# Python cache
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
 # IDE
-.pytest_cache/
 .vscode/
 .idea/
 *.swp
@@ -26,5 +34,15 @@ docker-compose.override.yml
 # OS
 Thumbs.db
 
-# Assets (test files)
+# Test assets (large files)
 assets/
+*.pdf
+*.flac
+*.png
+*.jpg
+*.jpeg
+
+# Model cache (if downloading locally)
+models/
+.cache/
+
