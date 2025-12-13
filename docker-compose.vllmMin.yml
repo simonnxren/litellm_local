@@ -1,0 +1,147 @@
+services:
+  # vLLM Embedding Instance
+  vllm-embedding:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-embedding
+    command: >
+      --model ${MODEL_EMBED_NAME}
+      --task embed
+      --port 8100
+      --host 0.0.0.0
+      --gpu-memory-utilization ${VLLM_EMBED_GPU_MEMORY:-0.15}
+      --trust-remote-code
+      --disable-log-requests
+      --max-num-seqs ${VLLM_EMBED_MAX_NUM_SEQS:-256}
+      --max-model-len 8192
+      --max-num-batched-tokens ${VLLM_EMBED_MAX_BATCHED_TOKENS:-8192}
+      --dtype auto
+      --enforce-eager
+      --enable-request-id-headers
+      --pooler-config '{"pooling_type":"MEAN","normalize":true}'
+    ports:
+      - "0.0.0.0:${VLLM_EMBED_PORT:-8100}:8100"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - vllm-network
+    restart: unless-stopped
+    shm_size: '2gb'
+
+  # vLLM Completions Instance (Qwen3-8B-FP8, 32K context, standard chat)
+  vllm-completions:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-completions
+    command: >
+      --model ${MODEL_COMPLETIONS_NAME}
+      --port 8101
+      --host 0.0.0.0
+      --gpu-memory-utilization ${VLLM_COMPLETIONS_GPU_MEMORY:-0.70}
+      --trust-remote-code
+      --disable-log-requests
+      --enable-prefix-caching
+      --max-num-seqs ${VLLM_COMPLETIONS_MAX_NUM_SEQS:-128}
+      --max-num-batched-tokens ${VLLM_COMPLETIONS_MAX_BATCHED_TOKENS:-65536}
+      --enable-chunked-prefill
+      --max-model-len ${VLLM_COMPLETIONS_MAX_MODEL_LEN:-32768}
+      --dtype auto
+      --enforce-eager
+      --enable-request-id-headers
+      --enable-force-include-usage
+      --enable-prompt-tokens-details
+      --scheduling-policy ${VLLM_COMPLETIONS_SCHEDULER_POLICY:-fcfs}
+      --enable-auto-tool-choice
+      --tool-call-parser hermes
+      --max-logprobs 20
+    ports:
+      - "0.0.0.0:${VLLM_COMPLETIONS_PORT:-8101}:8101"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+    depends_on:
+      vllm-embedding:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - vllm-network
+    restart: unless-stopped
+    shm_size: '4gb'
+
+  vllm-ocr:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-ocr
+    command: >
+      --model ${MODEL_OCR_NAME}
+      --port 8102
+      --host 0.0.0.0
+      --gpu-memory-utilization ${VLLM_OCR_GPU_MEMORY}
+      --logits-processors vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor
+      --trust-remote-code
+      --disable-log-requests
+      --max-num-seqs ${VLLM_OCR_MAX_NUM_SEQS:-64}
+      --max-model-len ${VLLM_OCR_MAX_MODEL_LEN:-8192}
+      --dtype auto
+      --enforce-eager
+      --enable-request-id-headers
+      --limit-mm-per-prompt '{"image":1}'
+      --mm-processor-cache-gb 0
+    ports:
+      - "0.0.0.0:${VLLM_OCR_PORT}:8102"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+      - VLLM_MEDIA_URL_ALLOW_REDIRECTS=0
+    depends_on:
+      vllm-completions:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+    networks:
+      - vllm-network
+    restart: unless-stopped
+    shm_size: '3gb'
+networks:
+  vllm-network:
+    driver: bridge

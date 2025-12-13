@@ -1,0 +1,203 @@
+# LiteLLM Proxy Configuration for memoria_vllm
+# This replaces the custom FastAPI router with LiteLLM gateway
+
+model_list:
+  # ============================================================================
+  # EMBEDDINGS SERVICE
+  # ============================================================================
+  - model_name: qwen3-embedding-0.6b
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-Embedding-0.6B
+      api_base: http://vllm-embedding:8100/v1
+      api_key: "not-needed"
+    model_info:
+      id: qwen3-embedding-0.6b
+      mode: embedding
+      supports_function_calling: false
+      supports_vision: false
+
+  # ============================================================================
+  # COMPLETIONS SERVICE (Standard Chat)
+  # ============================================================================
+  - model_name: qwen3-8b-fp8
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-8B-FP8
+      api_base: http://vllm-completions:8101/v1
+      api_key: "not-needed"
+      supports_response_schema: true
+    model_info:
+      id: qwen3-8b-fp8
+      mode: chat
+      supports_function_calling: true
+      supports_vision: false
+
+  # Alias for compatibility with existing clients
+  - model_name: Qwen/Qwen3-8B-FP8
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-8B-FP8
+      api_base: http://vllm-completions:8101/v1
+      api_key: "not-needed"
+      supports_response_schema: true
+      reasoning_parser: deepseek_r1
+    model_info:
+      id: Qwen/Qwen3-4B-Thinking-2507-FP8
+      mode: chat
+
+  # ============================================================================
+  # OCR SERVICE (Vision)
+  # ============================================================================
+  - model_name: hunyuan-ocr
+    litellm_params:
+      model: hosted_vllm/tencent/HunyuanOCR
+      api_base: http://vllm-ocr:8102/v1
+      api_key: "not-needed"
+    model_info:
+      id: hunyuan-ocr
+      mode: chat
+      supports_function_calling: false
+      supports_vision: true
+
+  # Alias for compatibility
+  - model_name: tencent/HunyuanOCR
+    litellm_params:
+      model: hosted_vllm/tencent/HunyuanOCR
+      api_base: http://vllm-ocr:8102/v1
+      api_key: "not-needed"
+    model_info:
+      id: tencent/HunyuanOCR
+      mode: chat
+      supports_vision: true
+
+  # ============================================================================
+  # WHISPER SERVICE (Audio Transcription)
+  # ============================================================================
+  - model_name: whisper-large-v3-turbo
+    litellm_params:
+      model: hosted_vllm/openai/whisper-large-v3-turbo
+      api_base: http://vllm-whisper:8103/v1
+      api_key: "not-needed"
+    model_info:
+      id: whisper-large-v3-turbo
+      mode: audio_transcription
+      supports_function_calling: false
+      supports_vision: false
+
+  # Alias for compatibility
+  - model_name: openai/whisper-large-v3-turbo
+    litellm_params:
+      model: hosted_vllm/openai/whisper-large-v3-turbo
+      api_base: http://vllm-whisper:8103/v1
+      api_key: "not-needed"
+    model_info:
+      id: openai/whisper-large-v3-turbo
+      mode: audio_transcription
+
+  # ============================================================================
+  # OLLAMA SERVICES (System Ollama on Host)
+  # ============================================================================
+  - model_name: ollama-qwen3-embedding
+    litellm_params:
+      model: ollama/qwen3-embedding:0.6b
+      api_base: http://172.17.0.1:11434
+    model_info:
+      id: ollama-qwen3-embedding
+      mode: embedding
+      supports_function_calling: false
+      supports_vision: false
+
+  - model_name: ollama-qwen3-completion
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: http://172.17.0.1:11434
+    model_info:
+      id: ollama-qwen3-completion
+      mode: chat
+      supports_function_calling: false
+      supports_vision: false
+
+  - model_name: ollama-vision
+    litellm_params:
+      model: ollama/deepseek-ocr:3b
+      api_base: http://172.17.0.1:11434
+    model_info:
+      id: ollama-vision
+      mode: chat
+      supports_function_calling: false
+      supports_vision: true
+
+# ============================================================================
+# ROUTER SETTINGS
+# ============================================================================
+router_settings:
+  routing_strategy: simple-shuffle  # Round-robin across models with same name
+  num_retries: 2
+  timeout: 300  # 5 minutes for long-running requests
+  fallbacks: []  # Can add fallback models here
+  allowed_fails: 1
+  cooldown_time: 10  # seconds before retrying failed endpoint
+
+# ============================================================================
+# LITELLM GENERAL SETTINGS
+# ============================================================================
+litellm_settings:
+  # Drop unsupported parameters instead of raising errors
+  drop_params: true
+  
+  # Set custom timeout
+  request_timeout: 300
+  
+  # Enable telemetry (optional - disable in production if needed)
+  telemetry: false
+  
+  # Max parallel requests
+  max_parallel_requests: 100
+  
+  # Success/failure callbacks for logging
+  success_callback: []  # Add "langfuse", "prometheus", "slack" etc.
+  failure_callback: []
+  
+  # Cache settings (optional - requires Redis)
+  # cache: true
+  # cache_params:
+  #   type: "redis"
+  #   host: "redis"
+  #   port: 6379
+  #   ttl: 3600
+
+  # Default team settings (for multi-tenancy)
+  # default_team_settings:
+  #   - team_id: default
+  #     max_budget: 100
+  #     budget_duration: 30d
+  #     max_rpm: 1000
+  #     max_tpm: 100000
+
+# ============================================================================
+# ENVIRONMENT VARIABLES
+# ============================================================================
+environment_variables:
+  # Master key for admin access (set via LITELLM_MASTER_KEY env var)
+  # LITELLM_MASTER_KEY: "sk-1234"
+  
+  # Salt key for encryption (set via LITELLM_SALT_KEY env var)
+  # LITELLM_SALT_KEY: "your-random-salt-key"
+  
+  # Database URL for key management (optional)
+  # DATABASE_URL: "postgresql://user:pass@db:5432/litellm"
+
+# ============================================================================
+# GENERAL SETTINGS
+# ============================================================================
+general_settings:
+  # Disable master key requirement for simplicity (not recommended for production)
+  # master_key: ${LITELLM_MASTER_KEY}
+  
+  # UI settings
+  # ui_username: ${LITELLM_UI_USERNAME}
+  # ui_password: ${LITELLM_UI_PASSWORD}
+  
+  # Store model in db (set to false for in-memory mode)
+  store_model_in_db: false
+  
+  # Max request size
+  max_request_size_mb: 100

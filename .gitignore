@@ -1,0 +1,30 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE
+.pytest_cache/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+*.env
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# OS
+Thumbs.db
+
+# Assets (test files)
+assets/
