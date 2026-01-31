@@ -46,3 +46,6 @@ assets/
 models/
 .cache/
 
+
+# LiteLLM
+litellm_config.yaml

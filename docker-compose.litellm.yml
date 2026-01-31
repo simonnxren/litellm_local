@@ -30,5 +30,5 @@ services:
 
 networks:
   vllm-network:
-    driver: bridge
+    external: true
     name: vllm-shared-network

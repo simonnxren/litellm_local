@@ -1,5 +1,5 @@
 # Docker Compose - Full vLLM Setup
-# 4 services: Embedding, Completions, OCR, Whisper (audio)
+# 4 services: Embedding, Completions, OCR, ASR (audio)
 # Requires more GPU memory or multi-GPU setup
 
 services:
@@ -10,15 +10,14 @@ services:
     env_file:
       - .env
     command: >
-      --model ${MODEL_EMBED_NAME}
-      --task embed
+      ${MODEL_EMBED_NAME}
       --port 8100
       --host 0.0.0.0
       --gpu-memory-utilization ${VLLM_EMBED_GPU_MEMORY:-0.15}
       --trust-remote-code
       --disable-log-requests
       --max-num-seqs ${VLLM_EMBED_MAX_NUM_SEQS:-256}
-      --max-model-len 8192
+      --max-model-len 4096
       --max-num-batched-tokens ${VLLM_EMBED_MAX_BATCHED_TOKENS:-8192}
       --dtype auto
       --enforce-eager
@@ -53,33 +52,25 @@ services:
   vllm-completions:
     image: vllm/vllm-openai:latest
     container_name: vllm-completions
+    depends_on:
+      vllm-embedding:
+        condition: service_healthy
     env_file:
       - .env
     command: >
-      --model ${MODEL_COMPLETIONS_NAME}
+      ${MODEL_COMPLETIONS_NAME}
       --port 8101
       --host 0.0.0.0
-      --gpu-memory-utilization ${VLLM_COMPLETIONS_GPU_MEMORY:-0.70}
+      --gpu-memory-utilization ${VLLM_COMPLETIONS_GPU_MEMORY:-0.50}
       --trust-remote-code
       --disable-log-requests
       --enable-prefix-caching
-      --max-num-seqs ${VLLM_COMPLETIONS_MAX_NUM_SEQS:-128}
+      --max-num-seqs ${VLLM_COMPLETIONS_MAX_NUM_SEQS:-64}
       --max-num-batched-tokens ${VLLM_COMPLETIONS_MAX_BATCHED_TOKENS:-16384}
-      --enable-chunked-prefill
       --max-model-len ${VLLM_COMPLETIONS_MAX_MODEL_LEN:-8192}
       --dtype auto
       --enforce-eager
-      --enable-request-id-headers
-      --enable-force-include-usage
-      --enable-prompt-tokens-details
-      --scheduling-policy ${VLLM_COMPLETIONS_SCHEDULER_POLICY:-fcfs}
-      --reasoning-parser deepseek_r1
-      --enable-auto-tool-choice
-      --tool-call-parser hermes
-      --guided-decoding-backend outlines
-      --max-logprobs 20
-      --kv-cache-dtype fp8
-      --disable-frontend-multiprocessing
+      --limit-mm-per-prompt.video 0
     ports:
       - "0.0.0.0:${VLLM_COMPLETIONS_PORT}:8101"
     volumes:
@@ -89,9 +80,7 @@ services:
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
-    depends_on:
-      vllm-embedding:
-        condition: service_healthy
+      - OMP_NUM_THREADS=1
     deploy:
       resources:
         reservations:
@@ -117,7 +106,7 @@ services:
     env_file:
       - .env
     command: >
-      --model ${MODEL_OCR_NAME}
+      ${MODEL_OCR_NAME}
       --port 8102
       --host 0.0.0.0
       --gpu-memory-utilization ${VLLM_OCR_GPU_MEMORY:-0.20}
@@ -139,9 +128,6 @@ services:
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
       - VLLM_MEDIA_URL_ALLOW_REDIRECTS=0
-    depends_on:
-      vllm-completions:
-        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -160,30 +146,29 @@ services:
     restart: unless-stopped
     shm_size: '3gb'
 
-  # vLLM Whisper (Audio Transcription) Instance
-  vllm-whisper:
+  # vLLM ASR (Audio Transcription) Instance
+  vllm-asr:
     image: vllm/vllm-openai:latest
-    container_name: vllm-whisper
+    container_name: vllm-asr
     env_file:
       - .env
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         pip install --no-cache-dir 'vllm[audio]' && \
-        vllm serve \
-          --model ${MODEL_WHISPER_NAME} \
+        vllm serve ${MODEL_ASR_NAME} \
           --port 8103 \
           --host 0.0.0.0 \
-          --gpu-memory-utilization ${VLLM_WHISPER_GPU_MEMORY:-0.10} \
+          --gpu-memory-utilization ${VLLM_ASR_GPU_MEMORY:-0.10} \
           --trust-remote-code \
           --disable-log-requests \
-          --max-num-seqs ${VLLM_WHISPER_MAX_NUM_SEQS:-64} \
-          --max-model-len ${VLLM_WHISPER_MAX_MODEL_LEN:-448} \
+          --max-num-seqs ${VLLM_ASR_MAX_NUM_SEQS:-64} \
+          --max-model-len ${VLLM_ASR_MAX_MODEL_LEN:-448} \
           --dtype auto \
           --enforce-eager \
           --enable-request-id-headers
     ports:
-      - "0.0.0.0:${VLLM_WHISPER_PORT}:8103"
+      - "0.0.0.0:${VLLM_ASR_PORT}:8103"
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
@@ -212,5 +197,5 @@ services:
 
 networks:
   vllm-network:
-    driver: bridge
+    external: true
     name: vllm-shared-network

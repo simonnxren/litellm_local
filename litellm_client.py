@@ -31,9 +31,9 @@ class LiteLLMClient:
         self,
         base_url: str = "http://localhost:8200/v1",
         api_key: str = "dummy",
-        embedding_model: str = "qwen3-embedding-0.6b",
-        chat_model: str = "qwen3-8b-fp8",
-        ocr_model: str = "hunyuan-ocr",
+        embedding_model: str = "embedding",
+        chat_model: str = "completions",
+        ocr_model: str = "ocr",
     ):
         """
         Initialize the LiteLLM client.
