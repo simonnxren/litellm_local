@@ -77,8 +77,15 @@ class TestCompletions:
 class TestOCR:
     """Test OCR model."""
 
+    @pytest.mark.skipif(
+        not __import__('os').path.exists('assets/Screenshot From 2025-11-02 16-41-52.png'),
+        reason="Test image not found - place test image in assets/ directory"
+    )
     def test_ocr_image(self, client):
-        """Test OCR on image."""
+        """Test OCR on image.
+        
+        Requires a test image at: assets/Screenshot From 2025-11-02 16-41-52.png
+        """
         import base64
         with open('assets/Screenshot From 2025-11-02 16-41-52.png', 'rb') as f:
             b64 = base64.b64encode(f.read()).decode()

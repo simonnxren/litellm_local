@@ -35,10 +35,23 @@ cd litellm_local
 cp .env.example .env
 
 # 3. Start services
-./start_vllm.sh
+./llm.sh start
 
 # 4. Verify
 curl http://localhost:8200/health
+```
+
+### Management Commands
+
+```bash
+./llm.sh start          # Start vLLM services
+./llm.sh start ollama   # Use Ollama backend instead
+./llm.sh stop           # Stop all services
+./llm.sh restart        # Restart services
+./llm.sh status         # Show service status
+./llm.sh logs gateway   # Tail gateway logs
+./llm.sh info           # Show access info
+./llm.sh health         # Check service health
 ```
 
 ## LAN Access
@@ -47,10 +60,7 @@ Services are accessible from any device on your local network:
 
 ```bash
 # Check network configuration and get your IP
-./network_info.sh
-
-# Or manually get your server IP
-hostname -I | awk '{print $1}'
+./llm.sh info
 
 # Test from another device (replace with your IP)
 curl http://192.168.1.100:8200/health
@@ -132,25 +142,7 @@ response = client.chat.completions.create(
     }],
     max_tokens=500
 )
-print("Extracted text:", response.choices[0].message.content
-)
-
-# OCR
-import base64
-with open("image.jpg", "rb") as f:
-    img_b64 = base64.b64encode(f.read()).decode()
-
-ocr = client.chat.completions.create(
-    model="hunyuan-ocr",
-    messages=[{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "Extract text"},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-        ]
-    }],
-    max_tokens=2048
-)
+print("Extracted text:", response.choices[0].message.content)
 ```
 
 ### cURL Examples

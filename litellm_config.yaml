@@ -40,7 +40,7 @@ model_list:
       supports_response_schema: true
       reasoning_parser: deepseek_r1
     model_info:
-      id: Qwen/Qwen3-4B-Thinking-2507-FP8
+      id: Qwen/Qwen3-8B-FP8
       mode: chat
 
   # ============================================================================
@@ -101,12 +101,12 @@ model_list:
 # ROUTER SETTINGS
 # ============================================================================
 router_settings:
-  routing_strategy: simple-shuffle  # Round-robin across models with same name
-  num_retries: 2
-  timeout: 300  # 5 minutes for long-running requests
-  fallbacks: []  # Can add fallback models here
+  routing_strategy: least-busy # Best for high concurrency workloads
+  num_retries: 3
+  timeout: 300 # 5 minutes for long-running requests
+  fallbacks: [] # Can add fallback models here
   allowed_fails: 1
-  cooldown_time: 10  # seconds before retrying failed endpoint
+  cooldown_time: 10 # seconds before retrying failed endpoint
 
 # ============================================================================
 # LITELLM GENERAL SETTINGS
@@ -114,20 +114,26 @@ router_settings:
 litellm_settings:
   # Drop unsupported parameters instead of raising errors
   drop_params: true
-  
+
   # Set custom timeout
   request_timeout: 300
-  
+
   # Enable telemetry (optional - disable in production if needed)
   telemetry: false
-  
+
   # Max parallel requests
   max_parallel_requests: 100
-  
+
   # Success/failure callbacks for logging
-  success_callback: []  # Add "langfuse", "prometheus", "slack" etc.
+  success_callback: ["prometheus"] # Enable Prometheus metrics
   failure_callback: []
-  
+
+  # Response caching (reduces latency for repeated queries)
+  cache: true
+  cache_params:
+    type: "local"
+    ttl: 3600
+
   # Cache settings (optional - requires Redis)
   # cache: true
   # cache_params:
@@ -150,10 +156,10 @@ litellm_settings:
 environment_variables:
   # Master key for admin access (set via LITELLM_MASTER_KEY env var)
   # LITELLM_MASTER_KEY: "sk-1234"
-  
+
   # Salt key for encryption (set via LITELLM_SALT_KEY env var)
   # LITELLM_SALT_KEY: "your-random-salt-key"
-  
+
   # Database URL for key management (optional)
   # DATABASE_URL: "postgresql://user:pass@db:5432/litellm"
 
@@ -163,13 +169,13 @@ environment_variables:
 general_settings:
   # Disable master key requirement for simplicity (not recommended for production)
   # master_key: ${LITELLM_MASTER_KEY}
-  
+
   # UI settings
   # ui_username: ${LITELLM_UI_USERNAME}
   # ui_password: ${LITELLM_UI_PASSWORD}
-  
+
   # Store model in db (set to false for in-memory mode)
   store_model_in_db: false
-  
+
   # Max request size
   max_request_size_mb: 100

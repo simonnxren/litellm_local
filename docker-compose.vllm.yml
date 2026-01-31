@@ -1,6 +1,6 @@
-# Docker Compose - Minimal vLLM Setup
-# 3 services: Embedding, Completions, OCR
-# Optimized for 24GB GPU
+# Docker Compose - Full vLLM Setup
+# 4 services: Embedding, Completions, OCR, Whisper (audio)
+# Requires more GPU memory or multi-GPU setup
 
 services:
   # vLLM Embedding Instance
@@ -25,7 +25,7 @@ services:
       --enable-request-id-headers
       --pooler-config '{"pooling_type":"MEAN","normalize":true}'
     ports:
-      - "0.0.0.0:${VLLM_EMBED_PORT:-8100}:8100"
+      - "0.0.0.0:${VLLM_EMBED_PORT}:8100"
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
@@ -49,7 +49,7 @@ services:
     restart: unless-stopped
     shm_size: '2gb'
 
-  # vLLM Completions Instance (Qwen3-8B-FP8, 32K context, standard chat)
+  # vLLM Completions Instance
   vllm-completions:
     image: vllm/vllm-openai:latest
     container_name: vllm-completions
@@ -64,20 +64,26 @@ services:
       --disable-log-requests
       --enable-prefix-caching
       --max-num-seqs ${VLLM_COMPLETIONS_MAX_NUM_SEQS:-128}
-      --max-num-batched-tokens ${VLLM_COMPLETIONS_MAX_BATCHED_TOKENS:-65536}
+      --max-num-batched-tokens ${VLLM_COMPLETIONS_MAX_BATCHED_TOKENS:-16384}
       --enable-chunked-prefill
-      --max-model-len ${VLLM_COMPLETIONS_MAX_MODEL_LEN:-32768}
+      --max-model-len ${VLLM_COMPLETIONS_MAX_MODEL_LEN:-8192}
       --dtype auto
       --enforce-eager
       --enable-request-id-headers
       --enable-force-include-usage
       --enable-prompt-tokens-details
       --scheduling-policy ${VLLM_COMPLETIONS_SCHEDULER_POLICY:-fcfs}
+      --reasoning-parser deepseek_r1
       --enable-auto-tool-choice
       --tool-call-parser hermes
+      --guided-decoding-backend outlines
       --max-logprobs 20
+      --kv-cache-dtype fp8
+      --disable-frontend-multiprocessing
     ports:
-      - "0.0.0.0:${VLLM_COMPLETIONS_PORT:-8101}:8101"
+      - "0.0.0.0:${VLLM_COMPLETIONS_PORT}:8101"
+    volumes:
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
@@ -104,6 +110,7 @@ services:
     restart: unless-stopped
     shm_size: '4gb'
 
+  # vLLM OCR Instance
   vllm-ocr:
     image: vllm/vllm-openai:latest
     container_name: vllm-ocr
@@ -113,7 +120,7 @@ services:
       --model ${MODEL_OCR_NAME}
       --port 8102
       --host 0.0.0.0
-      --gpu-memory-utilization ${VLLM_OCR_GPU_MEMORY}
+      --gpu-memory-utilization ${VLLM_OCR_GPU_MEMORY:-0.20}
       --logits-processors vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor
       --trust-remote-code
       --disable-log-requests
@@ -152,6 +159,58 @@ services:
       - vllm-network
     restart: unless-stopped
     shm_size: '3gb'
+
+  # vLLM Whisper (Audio Transcription) Instance
+  vllm-whisper:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-whisper
+    env_file:
+      - .env
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        pip install --no-cache-dir 'vllm[audio]' && \
+        vllm serve \
+          --model ${MODEL_WHISPER_NAME} \
+          --port 8103 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization ${VLLM_WHISPER_GPU_MEMORY:-0.10} \
+          --trust-remote-code \
+          --disable-log-requests \
+          --max-num-seqs ${VLLM_WHISPER_MAX_NUM_SEQS:-64} \
+          --max-model-len ${VLLM_WHISPER_MAX_MODEL_LEN:-448} \
+          --dtype auto \
+          --enforce-eager \
+          --enable-request-id-headers
+    ports:
+      - "0.0.0.0:${VLLM_WHISPER_PORT}:8103"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+    depends_on:
+      vllm-ocr:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8103/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - vllm-network
+    restart: unless-stopped
+    shm_size: '2gb'
+
 networks:
   vllm-network:
     driver: bridge
+    name: vllm-shared-network
