@@ -1,9 +1,9 @@
-# Docker Compose - LiteLLM Gateway
-# OpenAI-compatible API gateway for vLLM services
-# Start this after vLLM services are healthy
+# Docker Compose - LiteLLM Gateway (Distributed Setup)
+# OpenAI-compatible API gateway routing to both machines
+# Machine A (local): completions, ocr
+# Machine B (192.168.1.78): embedding, asr
 
 services:
-  # LiteLLM Gateway (replaces custom FastAPI router)
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: litellm-gateway
@@ -11,8 +11,9 @@ services:
       - .env
     ports:
       - "0.0.0.0:${ROUTER_PORT:-8200}:4000"
-    volumes:
-      - ./litellm_config.yaml:/app/config.yaml:ro
+    configs:
+      - source: litellm_config
+        target: /app/config.yaml
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "8"]
     environment:
       - SEPARATE_HEALTH_APP=1
@@ -27,6 +28,105 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
+
+configs:
+  litellm_config:
+    content: |
+      model_list:
+        # EMBEDDING SERVICE (Machine B - 192.168.1.78)
+        - model_name: embedding
+          litellm_params:
+            model: hosted_vllm/Qwen/Qwen3-VL-Embedding-2B
+            api_base: http://192.168.1.78:8100/v1
+            api_key: "not-needed"
+          model_info:
+            mode: embedding
+
+        - model_name: Qwen/Qwen3-VL-Embedding-2B
+          litellm_params:
+            model: hosted_vllm/Qwen/Qwen3-VL-Embedding-2B
+            api_base: http://192.168.1.78:8100/v1
+            api_key: "not-needed"
+          model_info:
+            mode: embedding
+
+        # COMPLETIONS SERVICE (Machine A - localhost)
+        - model_name: completions
+          litellm_params:
+            model: hosted_vllm/Qwen/Qwen3-VL-8B-Instruct
+            api_base: http://vllm-completions:8101/v1
+            api_key: "not-needed"
+            supports_response_schema: true
+          model_info:
+            mode: chat
+            supports_function_calling: true
+
+        - model_name: Qwen/Qwen3-VL-8B-Instruct
+          litellm_params:
+            model: hosted_vllm/Qwen/Qwen3-VL-8B-Instruct
+            api_base: http://vllm-completions:8101/v1
+            api_key: "not-needed"
+            supports_response_schema: true
+            reasoning_parser: deepseek_r1
+          model_info:
+            mode: chat
+
+        # OCR SERVICE (Machine A - localhost)
+        - model_name: ocr
+          litellm_params:
+            model: hosted_vllm/tencent/HunyuanOCR
+            api_base: http://vllm-ocr:8102/v1
+            api_key: "not-needed"
+          model_info:
+            mode: chat
+            supports_vision: true
+
+        - model_name: tencent/HunyuanOCR
+          litellm_params:
+            model: hosted_vllm/tencent/HunyuanOCR
+            api_base: http://vllm-ocr:8102/v1
+            api_key: "not-needed"
+          model_info:
+            mode: chat
+            supports_vision: true
+
+        # ASR SERVICE (Machine B - 192.168.1.78)
+        - model_name: asr
+          litellm_params:
+            model: hosted_vllm/openai/whisper-large-v3-turbo
+            api_base: http://192.168.1.78:8103/v1
+            api_key: "not-needed"
+          model_info:
+            mode: audio_transcription
+
+        - model_name: openai/whisper-large-v3-turbo
+          litellm_params:
+            model: hosted_vllm/openai/whisper-large-v3-turbo
+            api_base: http://192.168.1.78:8103/v1
+            api_key: "not-needed"
+          model_info:
+            mode: audio_transcription
+
+      router_settings:
+        routing_strategy: least-busy
+        num_retries: 3
+        timeout: 300
+        allowed_fails: 1
+        cooldown_time: 10
+
+      litellm_settings:
+        drop_params: true
+        request_timeout: 300
+        telemetry: false
+        max_parallel_requests: 100
+        cache: true
+        cache_params:
+          type: "local"
+          ttl: 3600
+
+      general_settings:
+        store_model_in_db: false
+        max_request_size_mb: 100
 
 networks:
   vllm-network:
