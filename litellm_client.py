@@ -1,25 +1,44 @@
 """
 LiteLLM Local - Python Client SDK
 
-A simple wrapper around the OpenAI client for easy interaction with
-local vLLM services via the LiteLLM gateway.
+A unified client for multimodal embeddings, chat completions, and OCR
+via the LiteLLM gateway with OpenAI-compatible APIs.
 
-Usage:
+Quick Start:
     from litellm_client import LiteLLMClient
-
+    
     client = LiteLLMClient()
-
-    # Embeddings
-    embeddings = client.embed("Hello world")
-
-    # Chat
+    
+    # Text embeddings (1024 dims)
+    embedding = client.embed("Hello world")
+    
+    # Image embeddings
+    embedding = client.embed_image("/path/to/photo.jpg")
+    
+    # Chat completion
     response = client.chat("What is 2+2?")
+    
+    # OCR / vision
+    text = client.ocr("document.png")
 
-    # OCR
-    text = client.ocr("image.png")
+Features:
+    - Multimodal embeddings (text, image, video) via Qwen3-VL-Embedding-2B
+    - Text embeddings (OpenAI-compatible)
+    - Chat completions with streaming support
+    - OCR with vision-language models
+    - OpenAI-compatible client interface
+
+Convenience Functions:
+    from litellm_client import embed, embed_image, chat, ocr
+    
+    # These use a singleton client instance
+    embedding = embed("Hello world")
+    text = ocr("image.png")
+
+See README.md for detailed documentation and model information.
 """
 
-from typing import Optional, Union, Iterator
+from typing import Optional, Union, Iterator, cast
 from pathlib import Path
 import base64
 
@@ -40,10 +59,14 @@ class LiteLLMClient:
 
         Args:
             base_url: LiteLLM gateway URL (default: http://localhost:8200/v1)
-            api_key: API key (default: "dummy" for local deployment)
-            embedding_model: Model for embeddings
-            chat_model: Model for chat completions
-            ocr_model: Model for OCR/vision tasks
+            api_key: API key for authentication (default: "dummy" for local use)
+            embedding_model: Default model for embeddings (default: "embedding")
+            chat_model: Default model for chat (default: "completions")
+            ocr_model: Default model for OCR (default: "ocr")
+
+        Example:
+            >>> client = LiteLLMClient()
+            >>> client = LiteLLMClient(base_url="http://gateway:8200/v1")
         """
         try:
             from openai import OpenAI
@@ -61,27 +84,185 @@ class LiteLLMClient:
 
     def embed(
         self,
+        input_data: Union[str, list[str], dict, list[dict]],
+        model: Optional[str] = None,
+    ) -> Union[list[float], list[list[float]]]:
+        """
+        Generate embeddings for text, images, or multimodal inputs.
+
+        Unified method supporting:
+        - Text embeddings: "Hello world" or ["text1", "text2"]
+        - Image embeddings: {"image": "/path/to/img.jpg"}
+        - Multimodal: {"text": "...", "image": "..."}
+        - Video embeddings: {"video": "/path/to/video.mp4"}
+
+        Args:
+            input_data: Content to embed (string, list of strings, or dict)
+            model: Optional model name override
+
+        Returns:
+            Single embedding (1024 dims) or list of embeddings
+
+        Examples:
+            >>> # Text
+            >>> emb = client.embed("Hello world")
+            >>> 
+            >>> # Image
+            >>> emb = client.embed({"image": "photo.jpg"})
+            >>> 
+            >>> # Text + Image
+            >>> emb = client.embed({
+            ...     "text": "A photo of",
+            ...     "image": "cat.jpg"
+            ... })
+            >>> 
+            >>> # Batch
+            >>> embs = client.embed([
+            ...     {"text": "doc1"},
+            ...     {"image": "img1.jpg"},
+            ...     {"text": "query", "image": "img2.jpg"}
+            ... ])
+
+        Multimodal Format:
+            - {"text": "..."} - Text only
+            - {"text": "...", "instruction": "..."} - Text with instruction
+            - {"image": "path_or_url"} - Image only
+            - {"text": "...", "image": "..."} - Combined
+            - {"video": "path_or_url", "fps": 1, "max_frames": 10}
+
+        Note:
+            Default model outputs 1024-dimensional vectors.
+            Multimodal requires server support (Qwen3-VL-Embedding-2B).
+        """
+        is_multimodal = isinstance(input_data, dict) or (
+            isinstance(input_data, list) and len(input_data) > 0 and isinstance(input_data[0], dict)
+        )
+
+        if is_multimodal:
+            return self._embed_multimodal(input_data, model)
+        else:
+            response = self.client.embeddings.create(
+                model=model or self.embedding_model,
+                input=input_data,
+            )
+            if isinstance(input_data, str):
+                return response.data[0].embedding
+            return [item.embedding for item in response.data]
+
+    def _embed_multimodal(
+        self,
+        input_data: Union[dict, list[dict]],
+        model: Optional[str] = None,
+    ) -> Union[list[float], list[list[float]]]:
+        """Internal: multimodal embeddings (dict format)."""
+        if isinstance(input_data, dict):
+            inputs = [input_data]
+            single_input = True
+        else:
+            inputs = input_data
+            single_input = False
+
+        response = self.client.embeddings.create(
+            model=model or self.embedding_model,
+            input=inputs,
+        )
+
+        embeddings = [item.embedding for item in response.data]
+
+        if single_input:
+            return embeddings[0]
+        return embeddings
+
+    def embed_text(
+        self,
         text: Union[str, list[str]],
         model: Optional[str] = None,
     ) -> Union[list[float], list[list[float]]]:
         """
-        Generate embeddings for text.
+        Text-only embeddings.
+
+        Convenience method equivalent to embed() for text.
 
         Args:
-            text: Single string or list of strings to embed
-            model: Override default embedding model
+            text: Text string or list of strings
+            model: Optional model override
 
         Returns:
-            Single embedding vector or list of vectors (1024 dimensions each)
-        """
-        response = self.client.embeddings.create(
-            model=model or self.embedding_model,
-            input=text,
-        )
+            Single embedding or list of embeddings
 
-        if isinstance(text, str):
-            return response.data[0].embedding
-        return [item.embedding for item in response.data]
+        Example:
+            >>> client.embed_text("Hello world")
+            >>> client.embed_text(["Hello", "World"])
+        """
+        return self.embed(text, model=model)
+
+    def embed_image(
+        self,
+        image: Union[str, Path],
+        instruction: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> list[float]:
+        """
+        Image embeddings for similarity search and retrieval.
+
+        Args:
+            image: File path, URL, or base64 encoded image
+            instruction: Optional instruction for the model
+            model: Optional model override
+
+        Returns:
+            Single embedding vector (1024 dimensions)
+
+        Example:
+            >>> client.embed_image("/path/to/photo.jpg")
+            >>> client.embed_image("https://example.com/img.png")
+            >>> client.embed_image(
+            ...     "document.jpg",
+            ...     instruction="Extract visual features"
+            ... )
+
+        Supported: PNG, JPEG, WebP, GIF (path, URL, or base64)
+        """
+        input_dict: dict = {"image": str(image)}
+        if instruction:
+            input_dict["instruction"] = instruction
+        result = self.embed(input_dict, model=model)
+        return cast(list[float], result)
+
+    def embed_video(
+        self,
+        video: str,
+        fps: Optional[int] = None,
+        max_frames: Optional[int] = None,
+        instruction: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> list[float]:
+        """
+        Video embeddings for video search and analysis.
+
+        Args:
+            video: Video file path or URL
+            fps: Frames per second sampling (default: 1)
+            max_frames: Maximum frames to process
+            instruction: Optional instruction for the model
+            model: Optional model override
+
+        Returns:
+            Single embedding vector (1024 dimensions)
+
+        Example:
+            >>> client.embed_video("/path/to/video.mp4")
+            >>> client.embed_video("video.mp4", fps=2, max_frames=32)
+        """
+        input_dict: dict = {"video": video}
+        if fps is not None:
+            input_dict["fps"] = fps
+        if max_frames is not None:
+            input_dict["max_frames"] = max_frames
+        if instruction:
+            input_dict["instruction"] = instruction
+        result = self.embed(input_dict, model=model)
+        return cast(list[float], result)
 
     # =========================================================================
     # CHAT
@@ -99,20 +280,35 @@ class LiteLLMClient:
         **kwargs,
     ) -> Union[str, Iterator[str]]:
         """
-        Send a chat message and get a response.
+        Chat completion with streaming support.
 
         Args:
             message: User message
             system: Optional system prompt
-            history: Optional conversation history
-            max_tokens: Maximum tokens in response
-            temperature: Sampling temperature (0.0-1.0)
-            stream: If True, returns a generator of tokens
-            model: Override default chat model
-            **kwargs: Additional parameters passed to the API
+            history: Optional conversation history (OpenAI format)
+            max_tokens: Maximum response tokens (default: 1024)
+            temperature: Randomness 0.0-1.0 (default: 0.7)
+            stream: Return token iterator if True
+            model: Optional model override
+            **kwargs: Additional API parameters
 
         Returns:
-            Response text, or iterator of tokens if streaming
+            Response text, or iterator if streaming
+
+        Example:
+            >>> client.chat("What is Python?")
+            >>> client.chat("Hello", system="You are a pirate")
+            >>> 
+            >>> # With history
+            >>> history = [
+            ...     {"role": "user", "content": "My name is Alice"},
+            ...     {"role": "assistant", "content": "Hi Alice!"}
+            ... ]
+            >>> client.chat("What's my name?", history=history)
+            >>> 
+            >>> # Streaming
+            >>> for token in client.chat("Write a poem", stream=True):
+            ...     print(token, end="")
         """
         messages = []
 
@@ -135,7 +331,7 @@ class LiteLLMClient:
 
         if stream:
             return self._stream_response(response)
-        return response.choices[0].message.content
+        return response.choices[0].message.content  # type: ignore
 
     def _stream_response(self, stream) -> Iterator[str]:
         """Yield tokens from a streaming response."""
@@ -155,25 +351,35 @@ class LiteLLMClient:
         model: Optional[str] = None,
     ) -> str:
         """
-        Extract text from an image using OCR.
+        OCR text extraction from images.
+
+        Uses vision-language model to extract text from images.
 
         Args:
-            image: Path to image file, or raw bytes
-            prompt: Instruction for the OCR model
-            max_tokens: Maximum tokens in response
-            model: Override default OCR model
+            image: File path, Path object, or raw bytes
+            prompt: Instruction for OCR (default: "Extract all text from this image")
+            max_tokens: Maximum response tokens (default: 2048)
+            model: Optional model override
 
         Returns:
             Extracted text from the image
+
+        Example:
+            >>> client.ocr("/path/to/document.png")
+            >>> client.ocr("receipt.jpg", prompt="Extract total amount and date")
+            >>> 
+            >>> # From bytes
+            >>> with open("doc.png", "rb") as f:
+            ...     text = client.ocr(f.read())
+
+        Supported: PNG, JPEG, WebP
         """
-        # Load and encode image
         if isinstance(image, (str, Path)):
             image_path = Path(image)
             if not image_path.exists():
                 raise FileNotFoundError(f"Image not found: {image}")
             with open(image_path, "rb") as f:
                 image_bytes = f.read()
-            # Detect MIME type
             suffix = image_path.suffix.lower()
             mime_map = {
                 ".png": "image/png",
@@ -207,19 +413,37 @@ class LiteLLMClient:
             max_tokens=max_tokens,
         )
 
-        return response.choices[0].message.content
+        return response.choices[0].message.content  # type: ignore
 
     # =========================================================================
     # UTILITIES
     # =========================================================================
 
     def list_models(self) -> list[str]:
-        """List available models."""
+        """
+        List available models from the gateway.
+
+        Returns:
+            List of model ID strings
+
+        Example:
+            >>> models = client.list_models()
+            >>> print(models)  # ['embedding', 'completions', 'ocr', 'asr']
+        """
         models = self.client.models.list()
         return [m.id for m in models.data]
 
     def health(self) -> bool:
-        """Check if the service is healthy."""
+        """
+        Check if gateway service is healthy.
+
+        Returns:
+            True if service is responding, False otherwise
+
+        Example:
+            >>> if client.health():
+            ...     response = client.chat("Hello")
+        """
         try:
             self.client.models.list()
             return True
@@ -228,32 +452,86 @@ class LiteLLMClient:
 
 
 # =============================================================================
-# CONVENIENCE FUNCTIONS
+# CONVENIENCE FUNCTIONS (use singleton client)
 # =============================================================================
 
 _default_client: Optional[LiteLLMClient] = None
 
 
 def get_client(base_url: str = "http://localhost:8200/v1") -> LiteLLMClient:
-    """Get or create default client instance."""
+    """
+    Get or create singleton client instance.
+
+    Args:
+        base_url: Gateway URL (default: http://localhost:8200/v1)
+
+    Returns:
+        Singleton LiteLLMClient instance
+    """
     global _default_client
     if _default_client is None:
         _default_client = LiteLLMClient(base_url=base_url)
     return _default_client
 
 
-def embed(text: Union[str, list[str]]) -> Union[list[float], list[list[float]]]:
-    """Quick embedding function using default client."""
-    return get_client().embed(text)
+def embed(
+    input_data: Union[str, list[str], dict, list[dict]]
+) -> Union[list[float], list[list[float]]]:
+    """
+    Generate embeddings (text, image, or multimodal).
+
+    Uses singleton client. Supports:
+    - Text: "Hello world" or ["text1", "text2"]
+    - Image: {"image": "path/to/img.jpg"}
+    - Multimodal: {"text": "...", "image": "..."}
+
+    Example:
+        >>> from litellm_client import embed
+        >>> embed("Hello world")
+        >>> embed({"image": "photo.jpg"})
+        >>> embed({"text": "A photo of", "image": "cat.jpg"})
+    """
+    return get_client().embed(input_data)
+
+
+def embed_text(text: Union[str, list[str]]) -> Union[list[float], list[list[float]]]:
+    """Text-only embeddings using singleton client."""
+    return get_client().embed_text(text)
+
+
+def embed_image(image: Union[str, Path], instruction: Optional[str] = None) -> list[float]:
+    """
+    Image embeddings using singleton client.
+
+    Example:
+        >>> from litellm_client import embed_image
+        >>> embed_image("/path/to/photo.jpg")
+        >>> embed_image("https://example.com/img.png")
+    """
+    return get_client().embed_image(image, instruction=instruction)
 
 
 def chat(message: str, **kwargs) -> str:
-    """Quick chat function using default client."""
+    """
+    Chat completion using singleton client.
+
+    Example:
+        >>> from litellm_client import chat
+        >>> chat("What is Python?")
+        >>> chat("Hello", system="You are a pirate")
+    """
     return get_client().chat(message, **kwargs)
 
 
 def ocr(image: Union[str, Path, bytes], **kwargs) -> str:
-    """Quick OCR function using default client."""
+    """
+    OCR text extraction using singleton client.
+
+    Example:
+        >>> from litellm_client import ocr
+        >>> ocr("document.png")
+        >>> ocr("receipt.jpg", prompt="Extract total amount")
+    """
     return get_client().ocr(image, **kwargs)
 
 
