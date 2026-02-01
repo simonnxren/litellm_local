@@ -20,6 +20,9 @@ Quick Start:
     
     # OCR / vision
     text = client.ocr("document.png")
+    
+    # Audio transcription (ASR)
+    text = client.transcribe("speech.mp3")
 
 Features:
     - Multimodal embeddings (text, image, video) via Qwen3-VL-Embedding-2B
@@ -29,11 +32,12 @@ Features:
     - OpenAI-compatible client interface
 
 Convenience Functions:
-    from litellm_client import embed, embed_image, chat, ocr
+    from litellm_client import embed, embed_image, chat, ocr, transcribe
     
     # These use a singleton client instance
     embedding = embed("Hello world")
     text = ocr("image.png")
+    text = transcribe("speech.mp3")
 
 See README.md for detailed documentation and model information.
 """
@@ -461,6 +465,103 @@ class LiteLLMClient:
         except Exception:
             return False
 
+    # =========================================================================
+    # ASR / AUDIO TRANSCRIPTION
+    # =========================================================================
+
+    def transcribe(
+        self,
+        audio: Union[str, Path],
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        prompt: Optional[str] = None,
+        response_format: str = "json",
+        temperature: float = 0.0,
+        **kwargs,
+    ) -> str:
+        """
+        Transcribe audio file to text using Whisper ASR.
+
+        Supports various audio formats including MP3, WAV, M4A, FLAC.
+        Uses the OpenAI-compatible audio transcription API via vLLM backend.
+
+        Args:
+            audio: Path to audio file (MP3, WAV, M4A, FLAC, etc.)
+            model: Optional model name (default: "asr" which routes to whisper-large-v3-turbo)
+            language: Optional language code (e.g., "en", "zh", "es")
+            prompt: Optional prompt to guide transcription style
+            response_format: Output format - "json", "text", "srt", "vtt", "verbose_json"
+            temperature: Sampling temperature 0.0-1.0 (default: 0.0 for deterministic)
+            **kwargs: Additional parameters (seed, repetition_penalty, etc.)
+
+        Returns:
+            Transcribed text from the audio
+
+        Example:
+            >>> client = LiteLLMClient()
+            >>>
+            >>> # Basic transcription
+            >>> text = client.transcribe("speech.mp3")
+            >>> print(text)
+            >>>
+            >>> # Specify language
+            >>> text = client.transcribe("chinese.mp3", language="zh")
+            >>>
+            >>> # With custom prompt for style
+            >>> text = client.transcribe(
+            ...     "interview.wav",
+            ...     prompt="Transcribe this interview with timestamps"
+            ... )
+            >>>
+            >>> # Using specific model
+            >>> text = client.transcribe(
+            ...     "audio.mp3",
+            ...     model="openai/whisper-large-v3"
+            ... )
+
+        Supported Formats:
+            - MP3 (.mp3)
+            - WAV (.wav)
+            - M4A (.m4a)
+            - FLAC (.flac)
+            - OGG (.ogg)
+            - And others supported by Whisper
+
+        Note:
+            Maximum file size depends on the backend (typically 25MB).
+            For larger files, split into chunks or use the prompt parameter
+            to guide the model on audio segments.
+
+            The ASR service (whisper-large-v3-turbo) supports multilingual
+            transcription. Specify language for better accuracy.
+        """
+        audio_path = Path(audio)
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio}")
+
+        with open(audio_path, "rb") as f:
+            # Build parameters dynamically to avoid type issues with None
+            params = {
+                "file": f,
+                "model": model or "asr",  # Uses the "asr" alias from config
+                "temperature": temperature,
+            }
+            
+            # Only add optional parameters if they are provided
+            if language is not None:
+                params["language"] = language
+            if prompt is not None:
+                params["prompt"] = prompt
+            if response_format != "json":  # Only add if non-default
+                params["response_format"] = response_format  # type: ignore
+            if kwargs:
+                params.update(kwargs)
+
+            response = self.client.audio.transcriptions.create(**params)
+
+        # Return the transcribed text
+        return response.text
+
 
 # =============================================================================
 # CONVENIENCE FUNCTIONS (use singleton client)
@@ -544,6 +645,42 @@ def ocr(image: Union[str, Path, bytes], **kwargs) -> str:
         >>> ocr("receipt.jpg", prompt="Extract total amount")
     """
     return get_client().ocr(image, **kwargs)
+
+
+def transcribe(audio: Union[str, Path], **kwargs) -> str:
+    """
+    Audio transcription (ASR) using singleton client.
+
+    Transcribe audio files to text using Whisper ASR model.
+    Supports MP3, WAV, M4A, FLAC and other formats.
+
+    Args:
+        audio: Path to audio file
+        **kwargs: Optional parameters:
+            - language: Language code ("en", "zh", "es", etc.)
+            - prompt: Custom prompt for transcription style
+            - response_format: "json", "text", "srt", "vtt"
+            - temperature: 0.0-1.0 (default 0.0)
+
+    Returns:
+        Transcribed text from the audio
+
+    Example:
+        >>> from litellm_client import transcribe
+        >>>
+        >>> # Basic transcription
+        >>> text = transcribe("speech.mp3")
+        >>>
+        >>> # With language specification
+        >>> text = transcribe("chinese.mp3", language="zh")
+        >>>
+        >>> # With custom prompt
+        >>> text = transcribe(
+        ...     "interview.wav",
+        ...     prompt="Transcribe with timestamps"
+        ... )
+    """
+    return get_client().transcribe(audio, **kwargs)
 
 
 # =============================================================================
