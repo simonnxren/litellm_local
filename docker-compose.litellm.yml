@@ -51,7 +51,7 @@ configs:
         # COMPLETIONS SERVICE (Machine A - localhost)
         - model_name: completions
           litellm_params:
-            model: hosted_vllm/Qwen/Qwen3-VL-8B-Instruct
+            model: hosted_vllm/Qwen/Qwen3-VL-4B-Instruct
             api_base: http://vllm-completions:8101/v1
             api_key: "not-needed"
             supports_response_schema: true
@@ -61,7 +61,7 @@ configs:
 
         - model_name: Qwen/Qwen3-VL-8B-Instruct
           litellm_params:
-            model: hosted_vllm/Qwen/Qwen3-VL-8B-Instruct
+            model: hosted_vllm/Qwen/Qwen3-VL-4B-Instruct
             api_base: http://vllm-completions:8101/v1
             api_key: "not-needed"
             supports_response_schema: true
@@ -88,11 +88,11 @@ configs:
             mode: chat
             supports_vision: true
 
-        # ASR SERVICE (Machine B - 192.168.1.78)
+        # ASR SERVICE (Machine A - localhost)
         - model_name: asr
           litellm_params:
             model: hosted_vllm/openai/whisper-large-v3-turbo
-            api_base: http://192.168.1.78:8103/v1
+            api_base: http://vllm-asr:8103/v1
             api_key: "not-needed"
           model_info:
             mode: audio_transcription
@@ -100,7 +100,7 @@ configs:
         - model_name: openai/whisper-large-v3-turbo
           litellm_params:
             model: hosted_vllm/openai/whisper-large-v3-turbo
-            api_base: http://192.168.1.78:8103/v1
+            api_base: http://vllm-asr:8103/v1
             api_key: "not-needed"
           model_info:
             mode: audio_transcription

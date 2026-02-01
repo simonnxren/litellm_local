@@ -37,9 +37,9 @@ services:
       - HF_HOME=/root/.cache/huggingface
       - OMP_NUM_THREADS=1
       # Model config
-      - MODEL_COMPLETIONS_NAME=Qwen/Qwen3-VL-8B-Instruct
+      - MODEL_COMPLETIONS_NAME=Qwen/Qwen3-VL-4B-Instruct
       - GPU_TOTAL_GB=32
-      - VLLM_COMPLETIONS_GPU_GB=22
+      - VLLM_COMPLETIONS_GPU_GB=16
       - VLLM_COMPLETIONS_MAX_NUM_SEQS=64
       - VLLM_COMPLETIONS_MAX_BATCHED_TOKENS=16384
       - VLLM_COMPLETIONS_MAX_MODEL_LEN=8192
@@ -119,6 +119,62 @@ services:
       - vllm-network
     restart: unless-stopped
     shm_size: '3gb'
+
+  vllm-asr:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-asr
+    depends_on:
+      vllm-ocr:
+        condition: service_healthy
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        GPU_UTIL=$$(python3 -c "print($$VLLM_ASR_GPU_GB / $$GPU_TOTAL_GB)")
+        echo "GPU_UTIL=$$GPU_UTIL ($$VLLM_ASR_GPU_GB / $$GPU_TOTAL_GB GB)"
+        pip install --no-cache-dir 'vllm[audio]' && \
+        exec vllm serve $$MODEL_ASR_NAME \
+          --port 8103 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization $$GPU_UTIL \
+          --trust-remote-code \
+          --disable-log-requests \
+          --max-num-seqs $$VLLM_ASR_MAX_NUM_SEQS \
+          --max-model-len $$VLLM_ASR_MAX_MODEL_LEN \
+          --dtype auto \
+          --enforce-eager \
+          --enable-request-id-headers
+    ports:
+      - "0.0.0.0:8103:8103"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+      # Model config
+      - MODEL_ASR_NAME=openai/whisper-large-v3-turbo
+      - GPU_TOTAL_GB=32
+      - VLLM_ASR_GPU_GB=5
+      - VLLM_ASR_MAX_NUM_SEQS=64
+      - VLLM_ASR_MAX_MODEL_LEN=448
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8103/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - vllm-network
+    restart: unless-stopped
+    shm_size: '2gb'
 
 networks:
   vllm-network:
