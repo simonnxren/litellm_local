@@ -42,9 +42,23 @@ Convenience Functions:
 See README.md for detailed documentation and model information.
 """
 
-from typing import Optional, Union, Iterator, cast
+from typing import Optional, Union, Iterator, cast, overload, Literal
 from pathlib import Path
 import base64
+import time
+from functools import wraps
+
+
+__all__ = [
+    "LiteLLMClient",
+    "get_client",
+    "embed",
+    "embed_text",
+    "embed_image",
+    "chat",
+    "ocr",
+    "transcribe",
+]
 
 
 class LiteLLMClient:
@@ -147,7 +161,9 @@ class LiteLLMClient:
         )
 
         if is_multimodal:
-            return self._embed_multimodal(input_data, model)
+            # Narrow the type for multimodal data
+            multimodal_data: Union[dict, list[dict]] = input_data  # type: ignore
+            return self._embed_multimodal(multimodal_data, model)
         else:
             response = self.client.embeddings.create(
                 model=model or self.embedding_model,
@@ -570,6 +586,24 @@ class LiteLLMClient:
 _default_client: Optional[LiteLLMClient] = None
 
 
+def _with_retry(max_retries: int = 3, delay: float = 1.0):
+    """Decorator for retrying network operations."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(delay * (2 ** attempt))
+                        continue
+                    raise
+            return None
+        return wrapper
+    return decorator
+
+
 def get_client(base_url: str = "http://localhost:8200/v1") -> LiteLLMClient:
     """
     Get or create singleton client instance.
@@ -623,7 +657,15 @@ def embed_image(image: Union[str, Path], instruction: Optional[str] = None) -> l
     return get_client().embed_image(image, instruction=instruction)
 
 
-def chat(message: str, **kwargs) -> str:
+@overload
+def chat(message: str, *, stream: Literal[False] = False, **kwargs) -> str: ...
+
+
+@overload
+def chat(message: str, *, stream: Literal[True], **kwargs) -> Iterator[str]: ...
+
+
+def chat(message: str, **kwargs) -> Union[str, Iterator[str]]:
     """
     Chat completion using singleton client.
 
