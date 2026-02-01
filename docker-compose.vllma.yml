@@ -1,38 +1,48 @@
 # Docker Compose - Machine A (32GB GPU)
 # Services: vllm-completions, vllm-ocr
-# This machine also runs LiteLLM gateway
+
+x-gpu-config: &gpu-config
+  GPU_TOTAL_GB: 32
 
 services:
-  # vLLM Completions Instance (main chat model)
   vllm-completions:
     image: vllm/vllm-openai:latest
     container_name: vllm-completions
-    env_file:
-      - .env
-    command: >
-      ${MODEL_COMPLETIONS_NAME}
-      --port 8101
-      --host 0.0.0.0
-      --gpu-memory-utilization ${VLLM_COMPLETIONS_GPU_MEMORY:-0.70}
-      --trust-remote-code
-      --disable-log-requests
-      --enable-prefix-caching
-      --max-num-seqs ${VLLM_COMPLETIONS_MAX_NUM_SEQS:-64}
-      --max-num-batched-tokens ${VLLM_COMPLETIONS_MAX_BATCHED_TOKENS:-16384}
-      --max-model-len ${VLLM_COMPLETIONS_MAX_MODEL_LEN:-8192}
-      --dtype auto
-      --enforce-eager
-      --limit-mm-per-prompt.video 0
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        GPU_UTIL=$$(python3 -c "print($$VLLM_COMPLETIONS_GPU_GB / $$GPU_TOTAL_GB)")
+        echo "GPU_UTIL=$$GPU_UTIL ($$VLLM_COMPLETIONS_GPU_GB / $$GPU_TOTAL_GB GB)"
+        exec vllm serve $$MODEL_COMPLETIONS_NAME \
+          --port 8101 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization $$GPU_UTIL \
+          --trust-remote-code \
+          --disable-log-requests \
+          --enable-prefix-caching \
+          --max-num-seqs $$VLLM_COMPLETIONS_MAX_NUM_SEQS \
+          --max-num-batched-tokens $$VLLM_COMPLETIONS_MAX_BATCHED_TOKENS \
+          --max-model-len $$VLLM_COMPLETIONS_MAX_MODEL_LEN \
+          --dtype auto \
+          --enforce-eager \
+          --limit-mm-per-prompt.video 0
     ports:
-      - "0.0.0.0:${VLLM_COMPLETIONS_PORT}:8101"
+      - "0.0.0.0:8101:8101"
     volumes:
-      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
       - OMP_NUM_THREADS=1
+      # Model config
+      - MODEL_COMPLETIONS_NAME=Qwen/Qwen3-VL-8B-Instruct
+      - GPU_TOTAL_GB=32
+      - VLLM_COMPLETIONS_GPU_GB=22
+      - VLLM_COMPLETIONS_MAX_NUM_SEQS=64
+      - VLLM_COMPLETIONS_MAX_BATCHED_TOKENS=16384
+      - VLLM_COMPLETIONS_MAX_MODEL_LEN=8192
     deploy:
       resources:
         reservations:
@@ -51,37 +61,47 @@ services:
     restart: unless-stopped
     shm_size: '4gb'
 
-  # vLLM OCR Instance
   vllm-ocr:
     image: vllm/vllm-openai:latest
     container_name: vllm-ocr
-    env_file:
-      - .env
-    command: >
-      ${MODEL_OCR_NAME}
-      --port 8102
-      --host 0.0.0.0
-      --gpu-memory-utilization ${VLLM_OCR_GPU_MEMORY:-0.20}
-      --logits-processors vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor
-      --trust-remote-code
-      --disable-log-requests
-      --max-num-seqs ${VLLM_OCR_MAX_NUM_SEQS:-64}
-      --max-model-len ${VLLM_OCR_MAX_MODEL_LEN:-8192}
-      --dtype auto
-      --enforce-eager
-      --enable-request-id-headers
-      --limit-mm-per-prompt '{"image":1}'
-      --mm-processor-cache-gb 0
+    depends_on:
+      vllm-completions:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        GPU_UTIL=$$(python3 -c "print($$VLLM_OCR_GPU_GB / $$GPU_TOTAL_GB)")
+        echo "GPU_UTIL=$$GPU_UTIL ($$VLLM_OCR_GPU_GB / $$GPU_TOTAL_GB GB)"
+        exec vllm serve $$MODEL_OCR_NAME \
+          --port 8102 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization $$GPU_UTIL \
+          --logits-processors vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor \
+          --trust-remote-code \
+          --disable-log-requests \
+          --max-num-seqs $$VLLM_OCR_MAX_NUM_SEQS \
+          --max-model-len $$VLLM_OCR_MAX_MODEL_LEN \
+          --dtype auto \
+          --enforce-eager \
+          --enable-request-id-headers \
+          --limit-mm-per-prompt '{"image":1}' \
+          --mm-processor-cache-gb 0
     ports:
-      - "0.0.0.0:${VLLM_OCR_PORT}:8102"
+      - "0.0.0.0:8102:8102"
     volumes:
-      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
       - VLLM_MEDIA_URL_ALLOW_REDIRECTS=0
+      # Model config
+      - MODEL_OCR_NAME=tencent/HunyuanOCR
+      - GPU_TOTAL_GB=32
+      - VLLM_OCR_GPU_GB=6
+      - VLLM_OCR_MAX_NUM_SEQS=64
+      - VLLM_OCR_MAX_MODEL_LEN=8192
     deploy:
       resources:
         reservations:

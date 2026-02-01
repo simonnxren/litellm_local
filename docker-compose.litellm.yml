@@ -7,10 +7,8 @@ services:
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: litellm-gateway
-    env_file:
-      - .env
     ports:
-      - "0.0.0.0:${ROUTER_PORT:-8200}:4000"
+      - "0.0.0.0:8200:4000"
     configs:
       - source: litellm_config
         target: /app/config.yaml

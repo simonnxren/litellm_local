@@ -1,37 +1,43 @@
 # Docker Compose - Machine B (8GB GPU)
 # Services: vllm-embedding, vllm-asr
-# Lightweight models for the smaller GPU
 
 services:
-  # vLLM Embedding Instance
   vllm-embedding:
     image: vllm/vllm-openai:latest
     container_name: vllm-embedding
-    env_file:
-      - .env
-    command: >
-      ${MODEL_EMBED_NAME}
-      --port 8100
-      --host 0.0.0.0
-      --gpu-memory-utilization ${VLLM_EMBED_GPU_MEMORY:-0.30}
-      --trust-remote-code
-      --disable-log-requests
-      --max-num-seqs ${VLLM_EMBED_MAX_NUM_SEQS:-256}
-      --max-model-len 4096
-      --max-num-batched-tokens ${VLLM_EMBED_MAX_BATCHED_TOKENS:-8192}
-      --dtype auto
-      --enforce-eager
-      --enable-request-id-headers
-      --pooler-config '{"pooling_type":"MEAN","normalize":true}'
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        GPU_UTIL=$$(python3 -c "print($$VLLM_EMBED_GPU_GB / $$GPU_TOTAL_GB)")
+        echo "GPU_UTIL=$$GPU_UTIL ($$VLLM_EMBED_GPU_GB / $$GPU_TOTAL_GB GB)"
+        exec vllm serve $$MODEL_EMBED_NAME \
+          --port 8100 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization $$GPU_UTIL \
+          --trust-remote-code \
+          --disable-log-requests \
+          --max-num-seqs $$VLLM_EMBED_MAX_NUM_SEQS \
+          --max-model-len 4096 \
+          --max-num-batched-tokens $$VLLM_EMBED_MAX_BATCHED_TOKENS \
+          --dtype auto \
+          --enforce-eager \
+          --enable-request-id-headers \
+          --pooler-config '{"pooling_type":"MEAN","normalize":true}'
     ports:
-      - "0.0.0.0:${VLLM_EMBED_PORT}:8100"
+      - "0.0.0.0:8100:8100"
     volumes:
-      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
+      # Model config
+      - MODEL_EMBED_NAME=Qwen/Qwen3-VL-Embedding-2B
+      - GPU_TOTAL_GB=8
+      - VLLM_EMBED_GPU_GB=2
+      - VLLM_EMBED_MAX_NUM_SEQS=256
+      - VLLM_EMBED_MAX_BATCHED_TOKENS=8192
     deploy:
       resources:
         reservations:
@@ -50,36 +56,44 @@ services:
     restart: unless-stopped
     shm_size: '2gb'
 
-  # vLLM ASR (Audio Transcription) Instance
   vllm-asr:
     image: vllm/vllm-openai:latest
     container_name: vllm-asr
-    env_file:
-      - .env
+    depends_on:
+      vllm-embedding:
+        condition: service_healthy
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
+        GPU_UTIL=$$(python3 -c "print($$VLLM_ASR_GPU_GB / $$GPU_TOTAL_GB)")
+        echo "GPU_UTIL=$$GPU_UTIL ($$VLLM_ASR_GPU_GB / $$GPU_TOTAL_GB GB)"
         pip install --no-cache-dir 'vllm[audio]' && \
-        vllm serve ${MODEL_ASR_NAME} \
+        exec vllm serve $$MODEL_ASR_NAME \
           --port 8103 \
           --host 0.0.0.0 \
-          --gpu-memory-utilization ${VLLM_ASR_GPU_MEMORY:-0.25} \
+          --gpu-memory-utilization $$GPU_UTIL \
           --trust-remote-code \
           --disable-log-requests \
-          --max-num-seqs ${VLLM_ASR_MAX_NUM_SEQS:-64} \
-          --max-model-len ${VLLM_ASR_MAX_MODEL_LEN:-448} \
+          --max-num-seqs $$VLLM_ASR_MAX_NUM_SEQS \
+          --max-model-len $$VLLM_ASR_MAX_MODEL_LEN \
           --dtype auto \
           --enforce-eager \
           --enable-request-id-headers
     ports:
-      - "0.0.0.0:${VLLM_ASR_PORT}:8103"
+      - "0.0.0.0:8103:8103"
     volumes:
-      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
+      # Model config
+      - MODEL_ASR_NAME=openai/whisper-large-v3-turbo
+      - GPU_TOTAL_GB=8
+      - VLLM_ASR_GPU_GB=2
+      - VLLM_ASR_MAX_NUM_SEQS=64
+      - VLLM_ASR_MAX_MODEL_LEN=448
     deploy:
       resources:
         reservations:
