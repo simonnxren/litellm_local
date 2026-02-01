@@ -5,7 +5,7 @@ services:
   vllm-embedding:
     image: vllm/vllm-openai:latest
     container_name: vllm-embedding
-    entrypoint: ["/bin/bash", "-c"]
+    entrypoint: [ "/bin/bash", "-c" ]
     command:
       - |
         GPU_UTIL=$$(python3 -c "print($$VLLM_EMBED_GPU_GB / $$GPU_TOTAL_GB)")
@@ -44,9 +44,9 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8100/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -62,7 +62,7 @@ services:
     depends_on:
       vllm-embedding:
         condition: service_healthy
-    entrypoint: ["/bin/bash", "-c"]
+    entrypoint: [ "/bin/bash", "-c" ]
     command:
       - |
         GPU_UTIL=$$(python3 -c "print($$VLLM_ASR_GPU_GB / $$GPU_TOTAL_GB)")
@@ -100,9 +100,9 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8103/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8103/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -114,5 +114,5 @@ services:
 
 networks:
   vllm-network:
-    driver: bridge
+    external: true
     name: vllm-shared-network

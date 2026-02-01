@@ -1,0 +1,88 @@
+# Docker Compose - Machine B Services (GTX 1070 Ti)
+# Combined: Qwen3-VL-Embedding + WhisperX ASR
+# Optimized for Pascal GPU (8GB VRAM)
+
+services:
+  # ============================================================
+  # EMBEDDING SERVICE - Port 8100
+  # Qwen3-VL-Embedding-2B: multimodal embeddings (text, image, video)
+  # ============================================================
+  qwen3vl-embedding:
+    build:
+      context: ./qwen3vl-embedding-server
+      dockerfile: Dockerfile
+    image: qwen3vl-embedding-server:latest
+    container_name: qwen3vl-embedding
+    ports:
+      - "0.0.0.0:8100:8000"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - MODEL_NAME=Qwen/Qwen3-VL-Embedding-2B
+      - MAX_LENGTH=8192
+      - DEVICE=cuda
+      - HF_TOKEN=${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    networks:
+      - 1070b-network
+    restart: unless-stopped
+    shm_size: '4gb'
+
+  # ============================================================
+  # ASR SERVICE - Port 8103
+  # WhisperX: speech-to-text with speaker diarization
+  # ============================================================
+  whisperx:
+    build:
+      context: ./whisperx-server
+      dockerfile: Dockerfile
+    image: whisperx-server:latest
+    container_name: whisperx
+    ports:
+      - "0.0.0.0:8103:8000"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - ASR_MODEL=large-v3-turbo
+      - COMPUTE_TYPE=int8
+      - DEVICE=cuda
+      - BATCH_SIZE=16
+      # HuggingFace token for speaker diarization (pyannote models)
+      # Get token: https://huggingface.co/settings/tokens
+      # Accept: https://huggingface.co/pyannote/speaker-diarization-3.1
+      # Accept: https://huggingface.co/pyannote/segmentation-3.0
+      - HF_TOKEN=${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+    networks:
+      - 1070b-network
+    restart: unless-stopped
+    shm_size: '2gb'
+
+networks:
+  1070b-network:
+    external: true
+    name: 1070b-network
