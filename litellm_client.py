@@ -9,7 +9,7 @@ Quick Start:
     
     client = LiteLLMClient()
     
-    # Text embeddings (1024 dims)
+    # Text embeddings (2048 dims)
     embedding = client.embed("Hello world")
     
     # Image embeddings
@@ -101,7 +101,7 @@ class LiteLLMClient:
             model: Optional model name override
 
         Returns:
-            Single embedding (1024 dims) or list of embeddings
+            Single embedding (2048 dims) or list of embeddings
 
         Examples:
             >>> # Text
@@ -131,9 +131,13 @@ class LiteLLMClient:
             - {"video": "path_or_url", "fps": 1, "max_frames": 10}
 
         Note:
-            Default model outputs 1024-dimensional vectors.
+            Default model outputs 2048-dimensional vectors.
             Multimodal requires server support (Qwen3-VL-Embedding-2B).
         """
+        # Validate input is not empty
+        if isinstance(input_data, list) and len(input_data) == 0:
+            raise ValueError("Input list cannot be empty")
+
         is_multimodal = isinstance(input_data, dict) or (
             isinstance(input_data, list) and len(input_data) > 0 and isinstance(input_data[0], dict)
         )
@@ -211,7 +215,7 @@ class LiteLLMClient:
             model: Optional model override
 
         Returns:
-            Single embedding vector (1024 dimensions)
+            Single embedding vector (2048 dimensions)
 
         Example:
             >>> client.embed_image("/path/to/photo.jpg")
@@ -223,7 +227,14 @@ class LiteLLMClient:
 
         Supported: PNG, JPEG, WebP, GIF (path, URL, or base64)
         """
-        input_dict: dict = {"image": str(image)}
+        # Validate file exists if it's a path (not URL or base64)
+        image_str = str(image)
+        if not image_str.startswith(("http://", "https://", "data:image")):
+            image_path = Path(image)
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image not found: {image}")
+
+        input_dict: dict = {"image": image_str}
         if instruction:
             input_dict["instruction"] = instruction
         result = self.embed(input_dict, model=model)
@@ -248,7 +259,7 @@ class LiteLLMClient:
             model: Optional model override
 
         Returns:
-            Single embedding vector (1024 dimensions)
+            Single embedding vector (2048 dimensions)
 
         Example:
             >>> client.embed_video("/path/to/video.mp4")
