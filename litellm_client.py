@@ -6,21 +6,21 @@ via the LiteLLM gateway with OpenAI-compatible APIs.
 
 Quick Start:
     from litellm_client import LiteLLMClient
-    
+
     client = LiteLLMClient()
-    
+
     # Text embeddings (2048 dims)
     embedding = client.embed("Hello world")
-    
+
     # Image embeddings
     embedding = client.embed_image("/path/to/photo.jpg")
-    
+
     # Chat completion
     response = client.chat("What is 2+2?")
-    
+
     # OCR / vision
     text = client.ocr("document.png")
-    
+
     # Audio transcription (ASR)
     text = client.transcribe("speech.mp3")
 
@@ -33,7 +33,7 @@ Features:
 
 Convenience Functions:
     from litellm_client import embed, embed_image, chat, ocr, transcribe
-    
+
     # These use a singleton client instance
     embedding = embed("Hello world")
     text = ocr("image.png")
@@ -124,16 +124,16 @@ class LiteLLMClient:
         Examples:
             >>> # Text
             >>> emb = client.embed("Hello world")
-            >>> 
+            >>>
             >>> # Image
             >>> emb = client.embed({"image": "photo.jpg"})
-            >>> 
+            >>>
             >>> # Text + Image
             >>> emb = client.embed({
             ...     "text": "A photo of",
             ...     "image": "cat.jpg"
             ... })
-            >>> 
+            >>>
             >>> # Batch
             >>> embs = client.embed([
             ...     {"text": "doc1"},
@@ -157,7 +157,9 @@ class LiteLLMClient:
             raise ValueError("Input list cannot be empty")
 
         is_multimodal = isinstance(input_data, dict) or (
-            isinstance(input_data, list) and len(input_data) > 0 and isinstance(input_data[0], dict)
+            isinstance(input_data, list)
+            and len(input_data) > 0
+            and isinstance(input_data[0], dict)
         )
 
         if is_multimodal:
@@ -329,14 +331,14 @@ class LiteLLMClient:
         Example:
             >>> client.chat("What is Python?")
             >>> client.chat("Hello", system="You are a pirate")
-            >>> 
+            >>>
             >>> # With history
             >>> history = [
             ...     {"role": "user", "content": "My name is Alice"},
             ...     {"role": "assistant", "content": "Hi Alice!"}
             ... ]
             >>> client.chat("What's my name?", history=history)
-            >>> 
+            >>>
             >>> # Streaming
             >>> for token in client.chat("Write a poem", stream=True):
             ...     print(token, end="")
@@ -398,7 +400,7 @@ class LiteLLMClient:
         Example:
             >>> client.ocr("/path/to/document.png")
             >>> client.ocr("receipt.jpg", prompt="Extract total amount and date")
-            >>> 
+            >>>
             >>> # From bytes
             >>> with open("doc.png", "rb") as f:
             ...     text = client.ocr(f.read())
@@ -496,19 +498,19 @@ class LiteLLMClient:
         **kwargs,
     ) -> str:
         """
-        Transcribe audio file to text using Whisper ASR.
+        Transcribe audio file to text using ASR (Automatic Speech Recognition).
 
         Supports various audio formats including MP3, WAV, M4A, FLAC.
-        Uses the OpenAI-compatible audio transcription API via vLLM backend.
+        Uses the OpenAI-compatible audio transcription API.
 
         Args:
             audio: Path to audio file (MP3, WAV, M4A, FLAC, etc.)
-            model: Optional model name (default: "asr" which routes to whisper-large-v3-turbo)
-            language: Optional language code (e.g., "en", "zh", "es")
-            prompt: Optional prompt to guide transcription style
+            model: Optional model name (default: "asr" which routes to Qwen3-ASR-1.7B)
+            language: Optional language (e.g., "English", "Chinese", "Japanese")
+            prompt: Optional prompt/context to guide transcription
             response_format: Output format - "json", "text", "srt", "vtt", "verbose_json"
             temperature: Sampling temperature 0.0-1.0 (default: 0.0 for deterministic)
-            **kwargs: Additional parameters (seed, repetition_penalty, etc.)
+            **kwargs: Additional parameters
 
         Returns:
             Transcribed text from the audio
@@ -521,18 +523,12 @@ class LiteLLMClient:
             >>> print(text)
             >>>
             >>> # Specify language
-            >>> text = client.transcribe("chinese.mp3", language="zh")
+            >>> text = client.transcribe("chinese.mp3", language="Chinese")
             >>>
-            >>> # With custom prompt for style
+            >>> # With context prompt
             >>> text = client.transcribe(
             ...     "interview.wav",
-            ...     prompt="Transcribe this interview with timestamps"
-            ... )
-            >>>
-            >>> # Using specific model
-            >>> text = client.transcribe(
-            ...     "audio.mp3",
-            ...     model="openai/whisper-large-v3"
+            ...     prompt="Technical interview about machine learning"
             ... )
 
         Supported Formats:
@@ -541,15 +537,11 @@ class LiteLLMClient:
             - M4A (.m4a)
             - FLAC (.flac)
             - OGG (.ogg)
-            - And others supported by Whisper
+            - And other common audio formats
 
         Note:
-            Maximum file size depends on the backend (typically 25MB).
-            For larger files, split into chunks or use the prompt parameter
-            to guide the model on audio segments.
-
-            The ASR service (whisper-large-v3-turbo) supports multilingual
-            transcription. Specify language for better accuracy.
+            The ASR service (Qwen3-ASR-1.7B) supports multilingual transcription.
+            Specify language for better accuracy on non-English content.
         """
         audio_path = Path(audio)
         if not audio_path.exists():
@@ -562,7 +554,7 @@ class LiteLLMClient:
                 "model": model or "asr",  # Uses the "asr" alias from config
                 "temperature": temperature,
             }
-            
+
             # Only add optional parameters if they are provided
             if language is not None:
                 params["language"] = language
@@ -588,6 +580,7 @@ _default_client: Optional[LiteLLMClient] = None
 
 def _with_retry(max_retries: int = 3, delay: float = 1.0):
     """Decorator for retrying network operations."""
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -596,11 +589,13 @@ def _with_retry(max_retries: int = 3, delay: float = 1.0):
                     return func(*args, **kwargs)
                 except Exception as e:
                     if attempt < max_retries - 1:
-                        time.sleep(delay * (2 ** attempt))
+                        time.sleep(delay * (2**attempt))
                         continue
                     raise
             return None
+
         return wrapper
+
     return decorator
 
 
@@ -621,7 +616,7 @@ def get_client(base_url: str = "http://localhost:8200/v1") -> LiteLLMClient:
 
 
 def embed(
-    input_data: Union[str, list[str], dict, list[dict]]
+    input_data: Union[str, list[str], dict, list[dict]],
 ) -> Union[list[float], list[list[float]]]:
     """
     Generate embeddings (text, image, or multimodal).
@@ -645,7 +640,9 @@ def embed_text(text: Union[str, list[str]]) -> Union[list[float], list[list[floa
     return get_client().embed_text(text)
 
 
-def embed_image(image: Union[str, Path], instruction: Optional[str] = None) -> list[float]:
+def embed_image(
+    image: Union[str, Path], instruction: Optional[str] = None
+) -> list[float]:
     """
     Image embeddings using singleton client.
 
@@ -693,14 +690,14 @@ def transcribe(audio: Union[str, Path], **kwargs) -> str:
     """
     Audio transcription (ASR) using singleton client.
 
-    Transcribe audio files to text using Whisper ASR model.
+    Transcribe audio files to text using Qwen3-ASR model.
     Supports MP3, WAV, M4A, FLAC and other formats.
 
     Args:
         audio: Path to audio file
         **kwargs: Optional parameters:
-            - language: Language code ("en", "zh", "es", etc.)
-            - prompt: Custom prompt for transcription style
+            - language: Language ("English", "Chinese", "Japanese", etc.)
+            - prompt: Context prompt for transcription
             - response_format: "json", "text", "srt", "vtt"
             - temperature: 0.0-1.0 (default 0.0)
 
@@ -714,12 +711,12 @@ def transcribe(audio: Union[str, Path], **kwargs) -> str:
         >>> text = transcribe("speech.mp3")
         >>>
         >>> # With language specification
-        >>> text = transcribe("chinese.mp3", language="zh")
+        >>> text = transcribe("chinese.mp3", language="Chinese")
         >>>
-        >>> # With custom prompt
+        >>> # With context prompt
         >>> text = transcribe(
         ...     "interview.wav",
-        ...     prompt="Transcribe with timestamps"
+        ...     prompt="Technical interview"
         ... )
     """
     return get_client().transcribe(audio, **kwargs)
@@ -753,6 +750,15 @@ if __name__ == "__main__":
     ocr_parser.add_argument("image", help="Path to image file")
     ocr_parser.add_argument("--prompt", default="Extract all text from this image")
 
+    # Transcribe command
+    transcribe_parser = subparsers.add_parser(
+        "transcribe", help="Transcribe audio to text"
+    )
+    transcribe_parser.add_argument("audio", help="Path to audio file")
+    transcribe_parser.add_argument(
+        "--language", help="Language (e.g., English, Chinese)"
+    )
+
     # Models command
     subparsers.add_parser("models", help="List available models")
 
@@ -781,6 +787,10 @@ if __name__ == "__main__":
 
     elif args.command == "ocr":
         print(client.ocr(args.image, prompt=args.prompt))
+
+    elif args.command == "transcribe":
+        text = client.transcribe(args.audio, language=args.language)
+        print(text)
 
     elif args.command == "models":
         for model in client.list_models():
