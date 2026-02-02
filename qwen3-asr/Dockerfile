@@ -1,6 +1,10 @@
 # Dockerfile for Qwen3-ASR with Transformers inference backend
 # Lighter weight alternative to vLLM, using Hugging Face Transformers
 #
+# Supported ASR Models:
+#   - Qwen/Qwen3-ASR-1.7B (default, higher accuracy)
+#   - Qwen/Qwen3-ASR-0.6B (smaller, faster, less VRAM)
+#
 # Build:
 #   docker build -t qwen3-asr-transformers .
 #
@@ -9,6 +13,11 @@
 #
 # Run (API server):
 #   docker run --gpus all -d --rm -p 8000:8000 qwen3-asr-transformers serve
+#
+# Run with smaller model (less VRAM):
+#   docker run --gpus all -d --rm -p 8000:8000 \
+#     -e ASR_MODEL=Qwen/Qwen3-ASR-0.6B \
+#     qwen3-asr-transformers serve
 #
 # Run with model cache mounted:
 #   docker run --gpus all -it --rm -p 8000:8000 \
@@ -27,6 +36,7 @@ ENV NVCC_THREADS=2
 ENV CCACHE_DIR=/root/.cache/ccache
 
 # Model configuration (can be overridden at runtime)
+# ASR_MODEL options: Qwen/Qwen3-ASR-1.7B (default) or Qwen/Qwen3-ASR-0.6B
 ENV ASR_MODEL="Qwen/Qwen3-ASR-1.7B"
 ENV ALIGNER_MODEL="Qwen/Qwen3-ForcedAligner-0.6B"
 ENV MAX_BATCH_SIZE=32

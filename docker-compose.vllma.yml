@@ -138,8 +138,8 @@ services:
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - HF_HOME=/root/.cache/huggingface
-      # Model config
-      - ASR_MODEL=Qwen/Qwen3-ASR-1.7B
+      # Model config - Options: Qwen/Qwen3-ASR-1.7B (more accurate) or Qwen/Qwen3-ASR-0.6B (faster, less VRAM)
+      - ASR_MODEL=Qwen/Qwen3-ASR-0.6B
       - ALIGNER_MODEL=Qwen/Qwen3-ForcedAligner-0.6B
       - DEVICE_MAP=cuda:0
       - DTYPE=bfloat16

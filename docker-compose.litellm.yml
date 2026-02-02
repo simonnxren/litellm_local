@@ -89,17 +89,18 @@ configs:
             supports_vision: true
 
         # ASR SERVICE (Machine A - localhost) - Qwen3-ASR with Transformers
+        # Using 0.6B model for lower VRAM usage; can switch to 1.7B for higher accuracy
         - model_name: asr
           litellm_params:
-            model: openai/Qwen/Qwen3-ASR-1.7B
+            model: openai/Qwen/Qwen3-ASR-0.6B
             api_base: http://vllm-asr:8103/v1
             api_key: "not-needed"
           model_info:
             mode: audio_transcription
 
-        - model_name: Qwen/Qwen3-ASR-1.7B
+        - model_name: Qwen/Qwen3-ASR-0.6B
           litellm_params:
-            model: openai/Qwen/Qwen3-ASR-1.7B
+            model: openai/Qwen/Qwen3-ASR-0.6B
             api_base: http://vllm-asr:8103/v1
             api_key: "not-needed"
           model_info:
