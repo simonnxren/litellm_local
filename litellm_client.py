@@ -24,11 +24,17 @@ Quick Start:
     # Audio transcription (ASR)
     text = client.transcribe("speech.mp3")
 
+    # Audio transcription with timestamps
+    result = client.transcribe("speech.mp3", timestamps="segment")
+    for segment in result.segments:
+        print(f"[{segment['start']:.1f}s] {segment['text']}")
+
 Features:
     - Multimodal embeddings (text, image, video) via Qwen3-VL-Embedding-2B
     - Text embeddings (OpenAI-compatible)
     - Chat completions with streaming support
     - OCR with vision-language models
+    - Audio transcription with optional segment/word timestamps
     - OpenAI-compatible client interface
 
 Convenience Functions:
@@ -44,6 +50,7 @@ See README.md for detailed documentation and model information.
 
 from typing import Optional, Union, Iterator, cast, overload, Literal
 from pathlib import Path
+from dataclasses import dataclass, field
 import base64
 import time
 from functools import wraps
@@ -51,6 +58,7 @@ from functools import wraps
 
 __all__ = [
     "LiteLLMClient",
+    "TranscriptionResult",
     "get_client",
     "embed",
     "embed_text",
@@ -59,6 +67,53 @@ __all__ = [
     "ocr",
     "transcribe",
 ]
+
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
+
+
+@dataclass
+class TranscriptionResult:
+    """
+    Result from audio transcription.
+
+    Attributes:
+        text: Full transcribed text
+        language: Detected or specified language
+        segments: List of segment dicts with timestamps (if requested)
+                  Each segment has: {"id": int, "start": float, "end": float, "text": str}
+        words: List of word dicts with timestamps (if requested)
+               Each word has: {"word": str, "start": float, "end": float}
+
+    Example:
+        >>> result = client.transcribe("speech.mp3", timestamps="segment")
+        >>> print(result.text)
+        "Hello world. How are you?"
+        >>> for seg in result.segments:
+        ...     print(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
+        [0.0s - 1.5s] Hello world.
+        [2.0s - 3.2s] How are you?
+    """
+
+    text: str
+    language: Optional[str] = None
+    segments: list[dict] = field(default_factory=list)
+    words: list[dict] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        """Return the transcribed text when converted to string."""
+        return self.text
+
+    @property
+    def duration(self) -> Optional[float]:
+        """Total audio duration in seconds (from last segment/word end time)."""
+        if self.segments:
+            return self.segments[-1].get("end")
+        if self.words:
+            return self.words[-1].get("end")
+        return None
 
 
 class LiteLLMClient:
@@ -487,88 +542,133 @@ class LiteLLMClient:
     # ASR / AUDIO TRANSCRIPTION
     # =========================================================================
 
+    @overload
     def transcribe(
         self,
         audio: Union[str, Path],
+        *,
+        timestamps: None = None,
         model: Optional[str] = None,
         language: Optional[str] = None,
-        prompt: Optional[str] = None,
-        response_format: str = "json",
-        temperature: float = 0.0,
-        **kwargs,
-    ) -> str:
-        """
-        Transcribe audio file to text using ASR (Automatic Speech Recognition).
+    ) -> str: ...
 
-        Supports various audio formats including MP3, WAV, M4A, FLAC.
-        Uses the OpenAI-compatible audio transcription API.
+    @overload
+    def transcribe(
+        self,
+        audio: Union[str, Path],
+        *,
+        timestamps: Literal["segment", "word"],
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> TranscriptionResult: ...
+
+    def transcribe(
+        self,
+        audio: Union[str, Path],
+        *,
+        timestamps: Optional[Literal["segment", "word"]] = None,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> Union[str, TranscriptionResult]:
+        """
+        Transcribe audio to text using ASR (Automatic Speech Recognition).
 
         Args:
-            audio: Path to audio file (MP3, WAV, M4A, FLAC, etc.)
-            model: Optional model name (default: "asr" which routes to Qwen3-ASR-1.7B)
-            language: Optional language (e.g., "English", "Chinese", "Japanese")
-            prompt: Optional prompt/context to guide transcription
-            response_format: Output format - "json", "text", "srt", "vtt", "verbose_json"
-            temperature: Sampling temperature 0.0-1.0 (default: 0.0 for deterministic)
-            **kwargs: Additional parameters
+            audio: Path to audio file (MP3, WAV, M4A, FLAC, OGG, etc.)
+            timestamps: Request timestamps - "segment" or "word" (default: None)
+                - None: Return plain text (str)
+                - "segment": Return TranscriptionResult with segment timestamps
+                - "word": Return TranscriptionResult with word timestamps
+            model: Model name (default: "asr" -> Qwen3-ASR)
+            language: Language hint (e.g., "English", "Chinese", "Japanese")
 
         Returns:
-            Transcribed text from the audio
+            - str: Plain transcribed text (when timestamps=None)
+            - TranscriptionResult: Object with text, segments/words, and language
+              (when timestamps="segment" or "word")
 
-        Example:
-            >>> client = LiteLLMClient()
-            >>>
-            >>> # Basic transcription
-            >>> text = client.transcribe("speech.mp3")
-            >>> print(text)
-            >>>
-            >>> # Specify language
-            >>> text = client.transcribe("chinese.mp3", language="Chinese")
-            >>>
-            >>> # With context prompt
-            >>> text = client.transcribe(
-            ...     "interview.wav",
-            ...     prompt="Technical interview about machine learning"
-            ... )
+        Examples:
+            Basic transcription (returns str):
+                >>> text = client.transcribe("speech.mp3")
+                >>> print(text)
+                "Hello world. How are you today?"
 
-        Supported Formats:
-            - MP3 (.mp3)
-            - WAV (.wav)
-            - M4A (.m4a)
-            - FLAC (.flac)
-            - OGG (.ogg)
-            - And other common audio formats
+            With segment timestamps (returns TranscriptionResult):
+                >>> result = client.transcribe("speech.mp3", timestamps="segment")
+                >>> print(result.text)
+                "Hello world. How are you today?"
+                >>> for seg in result.segments:
+                ...     print(f"[{seg['start']:.1f}s] {seg['text']}")
+                [0.0s] Hello world.
+                [1.8s] How are you today?
 
-        Note:
-            The ASR service (Qwen3-ASR-1.7B) supports multilingual transcription.
-            Specify language for better accuracy on non-English content.
+            With word timestamps:
+                >>> result = client.transcribe("speech.mp3", timestamps="word")
+                >>> for word in result.words[:3]:
+                ...     print(f"{word['word']} ({word['start']:.2f}s)")
+                Hello (0.10s)
+                world (0.35s)
+                . (0.60s)
+
+            Specify language for non-English audio:
+                >>> text = client.transcribe("mandarin.mp3", language="Chinese")
+
+        Supported Audio Formats:
+            MP3, WAV, M4A, FLAC, OGG, WebM, and other common formats.
+
+        Notes:
+            - Segment timestamps group words into sentences/phrases based on
+              punctuation and silence gaps (similar to Whisper output).
+            - Word timestamps provide precise timing for each word.
+            - For long audio files (>60s), the server automatically uses chunked
+              processing to avoid memory issues while preserving timestamp accuracy.
         """
         audio_path = Path(audio)
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio}")
 
         with open(audio_path, "rb") as f:
-            # Build parameters dynamically to avoid type issues with None
-            params = {
-                "file": f,
-                "model": model or "asr",  # Uses the "asr" alias from config
-                "temperature": temperature,
-            }
+            # Use httpx directly for multipart form data with custom fields
+            # because openai client doesn't support timestamp_granularities
+            import httpx
 
-            # Only add optional parameters if they are provided
-            if language is not None:
-                params["language"] = language
-            if prompt is not None:
-                params["prompt"] = prompt
-            if response_format != "json":  # Only add if non-default
-                params["response_format"] = response_format  # type: ignore
-            if kwargs:
-                params.update(kwargs)
+            # Prepare form data
+            files = {"file": (audio_path.name, f, "audio/mpeg")}
+            data: dict = {"model": model or "asr"}
 
-            response = self.client.audio.transcriptions.create(**params)
+            if language:
+                data["language"] = language
 
-        # Return the transcribed text
-        return response.text
+            # Add timestamp granularity if requested
+            if timestamps:
+                data["timestamp_granularities"] = f'["{timestamps}"]'
+
+            # Make request directly to the ASR endpoint
+            # Extract base URL (remove /v1 suffix if present)
+            base = str(self.client.base_url).rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            url = f"{base}/v1/audio/transcriptions"
+
+            response = httpx.post(
+                url,
+                files=files,
+                data=data,
+                timeout=600.0,  # 10 min timeout for long audio
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        # Return appropriate type based on whether timestamps were requested
+        if timestamps is None:
+            return result.get("text", "")
+
+        return TranscriptionResult(
+            text=result.get("text", ""),
+            language=result.get("language"),
+            segments=result.get("segments", []),
+            words=result.get("words", []),
+        )
 
 
 # =============================================================================
@@ -686,40 +786,60 @@ def ocr(image: Union[str, Path, bytes], **kwargs) -> str:
     return get_client().ocr(image, **kwargs)
 
 
-def transcribe(audio: Union[str, Path], **kwargs) -> str:
-    """
-    Audio transcription (ASR) using singleton client.
+@overload
+def transcribe(
+    audio: Union[str, Path],
+    *,
+    timestamps: None = None,
+    language: Optional[str] = None,
+) -> str: ...
 
-    Transcribe audio files to text using Qwen3-ASR model.
-    Supports MP3, WAV, M4A, FLAC and other formats.
+
+@overload
+def transcribe(
+    audio: Union[str, Path],
+    *,
+    timestamps: Literal["segment", "word"],
+    language: Optional[str] = None,
+) -> TranscriptionResult: ...
+
+
+def transcribe(
+    audio: Union[str, Path],
+    *,
+    timestamps: Optional[Literal["segment", "word"]] = None,
+    language: Optional[str] = None,
+    **kwargs,
+) -> Union[str, TranscriptionResult]:
+    """
+    Transcribe audio to text using singleton client.
 
     Args:
-        audio: Path to audio file
-        **kwargs: Optional parameters:
-            - language: Language ("English", "Chinese", "Japanese", etc.)
-            - prompt: Context prompt for transcription
-            - response_format: "json", "text", "srt", "vtt"
-            - temperature: 0.0-1.0 (default 0.0)
+        audio: Path to audio file (MP3, WAV, M4A, FLAC, OGG, etc.)
+        timestamps: Request timestamps - "segment" or "word" (default: None)
+        language: Language hint (e.g., "English", "Chinese")
 
     Returns:
-        Transcribed text from the audio
+        - str: Plain text (when timestamps=None)
+        - TranscriptionResult: With text + segments/words (when timestamps specified)
 
-    Example:
+    Examples:
         >>> from litellm_client import transcribe
         >>>
-        >>> # Basic transcription
+        >>> # Basic - returns string
         >>> text = transcribe("speech.mp3")
         >>>
-        >>> # With language specification
-        >>> text = transcribe("chinese.mp3", language="Chinese")
+        >>> # With segments - returns TranscriptionResult
+        >>> result = transcribe("speech.mp3", timestamps="segment")
+        >>> for seg in result.segments:
+        ...     print(f"[{seg['start']:.1f}s] {seg['text']}")
         >>>
-        >>> # With context prompt
-        >>> text = transcribe(
-        ...     "interview.wav",
-        ...     prompt="Technical interview"
-        ... )
+        >>> # Non-English audio
+        >>> text = transcribe("mandarin.mp3", language="Chinese")
     """
-    return get_client().transcribe(audio, **kwargs)
+    return get_client().transcribe(
+        audio, timestamps=timestamps, language=language, **kwargs
+    )
 
 
 # =============================================================================
@@ -758,6 +878,11 @@ if __name__ == "__main__":
     transcribe_parser.add_argument(
         "--language", help="Language (e.g., English, Chinese)"
     )
+    transcribe_parser.add_argument(
+        "--timestamps",
+        choices=["segment", "word"],
+        help="Include timestamps (segment or word level)",
+    )
 
     # Models command
     subparsers.add_parser("models", help="List available models")
@@ -789,8 +914,24 @@ if __name__ == "__main__":
         print(client.ocr(args.image, prompt=args.prompt))
 
     elif args.command == "transcribe":
-        text = client.transcribe(args.audio, language=args.language)
-        print(text)
+        result = client.transcribe(
+            args.audio, language=args.language, timestamps=args.timestamps
+        )
+        if args.timestamps:
+            # Print with timestamps
+            print(f"Language: {result.language}")
+            print(f"Duration: {result.duration:.1f}s" if result.duration else "")
+            print("-" * 40)
+            if args.timestamps == "segment":
+                for seg in result.segments:
+                    print(f"[{seg['start']:6.1f}s - {seg['end']:6.1f}s] {seg['text']}")
+            else:  # word
+                for word in result.words:
+                    print(f"[{word['start']:6.2f}s] {word['word']}")
+            print("-" * 40)
+            print(f"\nFull text:\n{result.text}")
+        else:
+            print(result)
 
     elif args.command == "models":
         for model in client.list_models():
