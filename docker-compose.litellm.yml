@@ -1,7 +1,7 @@
 # Docker Compose - LiteLLM Gateway (Distributed Setup)
 # OpenAI-compatible API gateway routing to both machines
-# Machine A (local): completions, ocr
-# Machine B (192.168.1.78): embedding, asr
+# Machine A (local): completions, ocr, asr
+# Machine B (192.168.1.78): embedding
 
 services:
   litellm:
@@ -88,18 +88,18 @@ configs:
             mode: chat
             supports_vision: true
 
-        # ASR SERVICE (Machine A - localhost)
+        # ASR SERVICE (Machine A - localhost) - Qwen3-ASR with Transformers
         - model_name: asr
           litellm_params:
-            model: hosted_vllm/openai/whisper-large-v3-turbo
+            model: openai/Qwen/Qwen3-ASR-1.7B
             api_base: http://vllm-asr:8103/v1
             api_key: "not-needed"
           model_info:
             mode: audio_transcription
 
-        - model_name: openai/whisper-large-v3-turbo
+        - model_name: Qwen/Qwen3-ASR-1.7B
           litellm_params:
-            model: hosted_vllm/openai/whisper-large-v3-turbo
+            model: openai/Qwen/Qwen3-ASR-1.7B
             api_base: http://vllm-asr:8103/v1
             api_key: "not-needed"
           model_info:
