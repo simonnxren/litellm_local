@@ -1,0 +1,290 @@
+Audio: 000981_jfk-space-race-speech-59951.mp3
+Language: English
+Duration: 836.4s
+Segments: 283
+
+================================================================================
+
+[   0.16s -    3.44s] President Mr
+[   4.80s -    5.44s] Vice President
+[   6.64s -    7.04s] Governor
+[   8.80s -    9.60s] Congressman Thomas
+[  10.88s -   12.48s] Senator Wiley Congressman Miller
+[  13.44s -   14.08s] Mr Webb
+[  14.96s -   15.36s] Bell
+[  16.72s -   17.12s] Scientists
+[  18.00s -   19.52s] distinguished guests ladies and gentlemen
+[  20.56s -   22.40s] I appreciate your President
+[  23.28s -   25.52s] having made me in honor very visiting Professor
+[  26.08s -   27.20s] and I will assure you
+[  27.76s -   29.76s] that my first lecture will be very brief
+[  30.72s -   31.92s] I am delighted to be here
+[  32.64s -   34.96s] and I am particularly delighted to be here on this occasion
+[  36.08s -   37.44s] We meet at a college
+[  38.72s -   39.68s] noted for knowledge
+[  40.72s -   42.24s] in a city noted for progress
+[  43.20s -   44.56s] in a state noted for strength
+[  45.36s -   47.36s] and we stand in need of all three
+[  48.64s -   51.44s] For we meet in an hour of change and challenge
+[  52.64s -   54.48s] in a decade of hope and fear
+[  55.52s -   57.76s] in an age of both knowledge and ignorance
+[  58.80s -   60.48s] The greater our knowledge increases
+[  61.36s -   63.20s] the greater our ignorance unfolds
+[  64.40s -   65.76s] Despite the striking fact
+[  66.80s -   69.60s] that most of the scientists of the world has ever known
+[  70.32s -   71.04s] are alive
+[  71.68s -   72.56s] and working today
+[  73.68s -   77.60s] despite the fact that this nation's own scientific manpower
+[  78.32s -   80.16s] is doubling every 12 years
+[  81.12s -   82.08s] in a rate of growth
+[  83.12s -   86.56s] more than three times that of our population as a whole
+[  87.44s -   88.48s] Despite that
+[  89.60s -   92.16s] the vast stretches of the unknown
+[  92.80s -   93.84s] and the unanswered
+[  94.72s -   95.76s] and the unfinished
+[  96.80s -   98.00s] still far outstrip
+[  98.96s -  100.24s] our collective comprehension
+[ 101.52s -  103.20s] No man can fully grasp
+[ 104.08s -  104.72s] how far
+[ 105.36s -  106.88s] and how fast we have come
+[ 108.16s -  109.52s] but convinced you will
+[ 110.64s -  112.40s] The 50 thousand years
+[ 113.36s -  114.80s] of man's recorded history
+[ 115.76s -  118.08s] in a time span of but a half century
+[ 119.28s -  120.64s] stated in these terms
+[ 121.52s -  123.84s] We know very little about the first 40 years
+[ 124.88s -  126.08s] except at the end of them
+[ 126.88s -  130.56s] At that time man had learned to use the skins of animals to cover them
+[ 131.76s -  133.12s] Then about 10 years ago
+[ 133.84s -  134.72s] under this standard
+[ 135.52s -  137.12s] man emerged from his caves
+[ 138.00s -  139.60s] to construct other kinds of shelters
+[ 140.72s -  142.08s] Only five years ago
+[ 142.96s -  143.92s] man learned to write
+[ 144.88s -  146.24s] and use a clock with wheels
+[ 147.44s -  148.80s] Christianity began less
+[ 149.36s -  150.32s] than two years ago
+[ 151.36s -  153.28s] The printing press came this year
+[ 154.40s -  156.32s] and then less than two months ago
+[ 157.44s -  160.64s] During this whole 50 years span of human history
+[ 161.44s -  162.16s] the steam engine
+[ 163.12s -  164.72s] provided a new source of power
+[ 165.76s -  167.60s] Newton explored the meaning of gravity
+[ 168.56s -  169.28s] last month
+[ 170.24s -  172.00s] electric lights and telephones
+[ 172.64s -  175.60s] and automobiles and airplanes became available
+[ 176.48s -  177.52s] Only last week
+[ 178.57s -  179.77s] We developed penicillin
+[ 180.33s -  180.89s] and television
+[ 181.61s -  182.49s] and nuclear power
+[ 183.21s -  186.09s] And now if America's newest spacecraft
+[ 186.81s -  188.49s] succeeds in reaching Venus
+[ 189.45s -  191.61s] we will have literally reached the stars
+[ 192.33s -  193.53s] before midnight tonight
+[ 194.57s -  196.09s] This is a breathtaking pace
+[ 196.97s -  198.89s] and such a pace cannot help
+[ 199.93s -  201.05s] but create newills
+[ 202.01s -  203.21s] as it dispels old
+[ 204.17s -  205.93s] New ignorance new problems
+[ 206.73s -  207.37s] new dangers
+[ 208.49s -  210.49s] Surely the opening vistas of space
+[ 211.61s -  212.73s] promise by course
+[ 213.45s -  214.33s] and hardships
+[ 215.05s -  216.33s] as well as high reward
+[ 217.29s -  218.97s] So it is not surprising
+[ 219.93s -  223.21s] that some would have us stay where we are a little longer
+[ 223.77s -  224.17s] to rest
+[ 224.81s -  225.21s] to wait
+[ 226.17s -  227.77s] But this city of Houston
+[ 228.41s -  229.53s] this state of Texas
+[ 230.33s -  234.89s] this country of the United States was not built by those who waited and rested
+[ 235.45s -  236.49s] and wished to look behind
+[ 246.17s -  247.45s] This country was conquered
+[ 248.57s -  249.85s] by those who move forward
+[ 250.81s -  251.69s] and so will space
+[ 253.05s -  253.85s] William Bradford
+[ 255.13s -  256.57s] speaking in 1630 of the
+[ 257.93s -  259.69s] founding of the Plymouth Colony
+[ 260.81s -  262.97s] said that all great and honorable actions
+[ 263.77s -  265.69s] are accompanied with great difficulties
+[ 266.81s -  268.81s] and both must be embraced
+[ 269.77s -  270.49s] and overcome
+[ 271.29s -  272.33s] with admirable courage
+[ 273.29s -  276.65s] If this capsule history of our progress teaches us anything
+[ 277.53s -  283.13s] it is that man and his quest for knowledge and progress is determined and cannot be deterred
+[ 284.17s -  286.49s] The exploration of space will go ahead
+[ 287.37s -  289.13s] whether we join in it or not
+[ 290.49s -  293.29s] And it is one of the great adventures of all time
+[ 294.01s -  294.33s] and
+[ 294.97s -  294.97s] nation
+[ 296.09s -  298.89s] which expects to be the leader of other nations
+[ 299.69s -  301.05s] Can expect to stay behind
+[ 301.85s -  302.89s] in this race for space
+[ 303.93s -  305.53s] Those who came before us
+[ 306.49s -  309.85s] may assert that this country rolled the first waves
+[ 310.41s -  311.85s] of the industrial revolution
+[ 312.81s -  314.65s] the first waves of modern invention
+[ 315.69s -  317.45s] and the first waves of nuclear power
+[ 318.09s -  321.05s] And this generation does not intend to
+[ 321.93s -  323.29s] founder in the backwash
+[ 324.01s -  328.65s] of the coming age of space We mean to be a part of it We mean to lead it
+[ 340.33s -  341.61s] For the eyes of the world
+[ 342.73s -  344.01s] now look at the space
+[ 344.73s -  345.45s] to the moon
+[ 346.17s -  347.37s] and the planets beyond
+[ 348.25s -  349.53s] and we have vowed
+[ 350.57s -  352.49s] that we shall not see governed
+[ 353.53s -  355.53s] by a hostile flag of conquest
+[ 356.49s -  358.09s] but by a banner of freedom
+[ 359.05s -  359.53s] And peace
+[ 360.33s -  366.01s] we vow that we shall not see space filled with weapons of mass destruction
+[ 366.89s -  368.25s] but with instruments of knowledge
+[ 368.97s -  369.77s] and understanding
+[ 370.81s -  372.73s] Yet the vows of this nation
+[ 373.69s -  375.37s] can only be fulfilled
+[ 376.25s -  378.33s] if we in this nation are first
+[ 379.21s -  381.05s] and therefore we intend to be first
+[ 388.65s -  389.37s] In short
+[ 390.25s -  392.65s] our leadership in science and industry
+[ 393.61s -  395.69s] our hopes for peace and security
+[ 396.57s -  399.61s] our obligations to ourselves as well as others
+[ 400.41s -  402.65s] all require us to make this effort
+[ 403.45s -  404.81s] to solve these mysteries
+[ 405.77s -  407.61s] to solve them for the good of all men
+[ 408.41s -  412.09s] and to become the world's leading spacefaring nation
+[ 413.29s -  415.45s] We set sail on this new sea
+[ 416.33s -  418.97s] because there is new knowledge to be gained
+[ 419.61s -  421.13s] and new rights to be won
+[ 421.93s -  424.01s] and they must be won and used
+[ 424.73s -  426.25s] for the progress of all people
+[ 427.37s -  428.41s] For space science
+[ 429.21s -  431.37s] like nuclear science and all technology
+[ 432.09s -  433.77s] has no conscience of its own
+[ 434.89s -  439.05s] Whether it will become a force for good or ill depends on man
+[ 440.01s -  441.61s] And only if the United States
+[ 442.73s -  445.05s] occupies a position of preeminence
+[ 446.41s -  447.93s] can we help decide
+[ 449.05s -  450.09s] whether this new ocean
+[ 451.13s -  452.41s] will be a sea of peace
+[ 453.29s -  455.93s] or a new terrifying theater of war
+[ 457.13s -  459.69s] I do not say that we should or will go
+[ 460.57s -  461.29s] unprotected
+[ 462.09s -  464.09s] against the hostile misuse of space
+[ 464.97s -  466.89s] any more than we go unprotected
+[ 467.77s -  469.53s] against the hostile use of land
+[ 470.09s -  470.65s] or sea
+[ 471.53s -  475.21s] But I do say that space can be explored and mastered
+[ 476.17s -  477.93s] without feeding the fires of war
+[ 478.89s -  482.73s] without repeating the mistakes that man has made in extending his reach
+[ 483.29s -  484.73s] around this globe of ours
+[ 485.69s -  487.05s] There is no strife
+[ 487.85s -  488.49s] no prejudice
+[ 489.29s -  492.01s] no national conflict in outer space as yet
+[ 493.21s -  495.29s] It has a hostile to us all
+[ 496.17s -  499.45s] Its conquest deserves the best of all mankind
+[ 500.33s -  501.37s] and its opportunity
+[ 501.93s -  504.57s] for peaceful cooperation may never come again
+[ 505.85s -  507.45s] But why some say the moon
+[ 508.49s -  510.33s] Why choose this as our goal
+[ 511.37s -  512.41s] And they may well ask
+[ 513.37s -  514.81s] Why climb the highest mountain
+[ 515.85s -  517.45s] Why thirtyfive years ago
+[ 518.17s -  518.97s] fly the Atlantic
+[ 519.77s -  521.29s] Why does Wright say Texas
+[ 521.93s -  523.53s] We choose to go to the moon
+[ 524.65s -  525.85s] We choose to go to the moon
+[ 532.65s -  539.85s] We choose to go to the moon and this to gain and do the other things not because they are easy but because they are hard
+[ 541.01s -  542.21s] Because that goal
+[ 543.01s -  545.65s] will serve to organize and measure the best
+[ 546.29s -  547.73s] of our energies and skills
+[ 548.45s -  551.73s] because that challenge is one that we are willing to accept
+[ 552.37s -  554.45s] one we are willing to postpone
+[ 555.09s -  556.61s] and one we intend to win and
+[ 557.25s -  557.89s] the others too
+[ 563.41s -  564.61s] It is for these reasons
+[ 565.41s -  567.33s] that I regard the decision last year to
+[ 568.37s -  569.89s] shift our efforts in space
+[ 570.77s -  571.97s] from low to high gear
+[ 572.61s -  575.33s] as among the most important decisions that will be made
+[ 576.05s -  578.29s] during my incumbency in the office of the presidency
+[ 579.25s -  580.69s] In the last twentyfour hours
+[ 581.57s -  583.97s] we have seen facilities now being created
+[ 584.77s -  588.61s] for the greatest and most complex exploration in man's history
+[ 589.73s -  591.41s] We have felt the ground shake
+[ 592.29s -  594.61s] and the air shatter by the testing of a Saturn
+[ 595.33s -  596.69s] C1 booster rocket
+[ 597.65s -  599.09s] Many times as powerful
+[ 599.81s -  602.13s] as the Atlas which launched John Glenn
+[ 603.09s -  608.61s] generating power equivalent to ten thousand automobiles with their accelerator on the floor
+[ 609.57s -  610.69s] We have seen the site
+[ 611.49s -  613.73s] where five F1 rocket engines
+[ 614.61s -  615.97s] each one as powerful
+[ 616.85s -  619.49s] as all eight engines of the Saturn combine
+[ 620.37s -  621.65s] will be clustered together to
+[ 622.61s -  624.69s] make the advanced Saturn missile
+[ 625.57s -  626.85s] assembled in a new building
+[ 627.65s -  629.17s] to be built at Cape Canaveral
+[ 629.81s -  631.25s] as tall as a fortyeight
+[ 631.81s -  632.69s] story structure
+[ 633.41s -  635.09s] as wide as a city block
+[ 635.81s -  637.41s] and as long as two lanes
+[ 638.05s -  638.77s] of this field
+[ 639.81s -  641.57s] Within these last nineteen months
+[ 642.29s -  643.89s] and these fortyfive satellites
+[ 644.45s -  645.33s] have circled the Earth
+[ 646.21s -  649.25s] Some forty of them were made in the United States of America
+[ 650.13s -  651.89s] and they were far more sophisticated
+[ 652.69s -  655.57s] and supplied far more knowledge to the people of the world
+[ 656.13s -  657.57s] than those of the Soviet Union
+[ 658.53s -  659.81s] The Mariner space craft The
+[ 661.73s -  662.53s] Mariner
+[ 666.37s -  673.25s] space craft now in its great Venus is the most intricate instrument in the history of space science
+[ 674.13s -  675.57s] The accuracy of that shot
+[ 676.29s -  679.33s] is comparable to firing a missile from Cape Canaveral
+[ 679.89s -  682.93s] and dropping it in this stadium between the forty odd lines
+[ 684.21s -  686.69s] Transits satellites are helping our ships at sea
+[ 687.33s -  688.61s] to steer a safer course
+[ 689.65s -  693.25s] Tires satellites have given us unprecedented warnings of hurricanes
+[ 693.81s -  694.53s] and storms
+[ 695.09s -  697.89s] and will do the same for forest fires and icebergs
+[ 698.69s -  699.97s] We have had failures
+[ 700.53s -  703.09s] but so have others even if they do not admit it
+[ 703.89s -  705.01s] and they may be less public
+[ 705.89s -  709.09s] To be sure To be sure
+[ 712.13s -  712.53s] we are behind
+[ 713.89s -  715.73s] and will be behind for some time
+[ 716.37s -  717.25s] in manned flight
+[ 717.94s -  723.78s] But we do not intend to stay behind and in this decade we shall make up and move ahead
+[ 732.10s -  734.26s] The growth of our science and education
+[ 735.14s -  738.18s] will be enriched by new knowledge of our universe and environment
+[ 739.14s -  742.34s] by new techniques of learning and mapping and observation
+[ 743.30s -  748.58s] by new tools and computers for industry medicine and the home as well as the school
+[ 749.54s -  751.38s] Technical institutions such as Rice
+[ 752.18s -  754.42s] will reap the harvest of these gains
+[ 755.46s -  757.30s] And finally the space effort itself
+[ 758.18s -  759.30s] while still in its infancy
+[ 760.18s -  762.66s] has already created a great number of new companies
+[ 763.46s -  765.86s] and tens of thousands of new jobs
+[ 766.90s -  768.18s] Space and related industries
+[ 769.06s -  771.54s] are generating new demands in investment
+[ 772.10s -  773.22s] and skilled personnel
+[ 773.86s -  774.66s] and this city
+[ 775.22s -  777.14s] and this state and this region
+[ 777.94s -  779.62s] will share greatly in this growth
+[ 780.50s -  784.42s] What was once the furthest outpost on the old frontier of the West
+[ 785.14s -  789.78s] will be the furthest outpost on the new frontier of science and space
+[ 790.66s -  791.06s] Houston
+[ 796.26s -  797.54s] Your city of Houston
+[ 798.18s -  800.18s] with its manned spacecraft center
+[ 800.98s -  802.18s] will become the heart
+[ 802.98s -  805.70s] of a large scientific and engineering community
+[ 806.74s -  808.10s] During the next five years
+[ 808.90s -  812.34s] the National Aeronautic and Space Administration expects to double
+[ 813.14s -  815.78s] the number of scientists and engineers in this area
+[ 816.74s -  819.46s] To increase its outlays for salaries and expenses
+[ 820.02s -  821.54s] to sixty million dollars a year
+[ 822.50s -  826.42s] to invest some two hundred million dollars in plant and laboratory facilities
+[ 827.30s -  828.82s] and to direct a contract
+[ 829.54s -  830.50s] for new space efforts
+[ 831.06s -  834.50s] over one billion dollars from this center in this city
+[ 835.54s -  836.42s] To be sure all

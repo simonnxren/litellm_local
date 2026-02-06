@@ -1,12 +1,9 @@
 # Docker Compose - Machine A (32GB GPU)
-# Services: vllm-completions, vllm-ocr
-
-x-gpu-config: &gpu-config
-  GPU_TOTAL_GB: 32
+# Services: vllm-completions, vllm-ocr, vllm-asr
 
 services:
   vllm-completions:
-    image: vllm/vllm-openai:latest
+    image: vllm-blackwell-nightly:latest
     container_name: vllm-completions
     entrypoint: ["/bin/bash", "-c"]
     command:
@@ -20,6 +17,7 @@ services:
           --trust-remote-code \
           --disable-log-requests \
           --enable-prefix-caching \
+          --enable-chunked-prefill \
           --max-num-seqs $$VLLM_COMPLETIONS_MAX_NUM_SEQS \
           --max-num-batched-tokens $$VLLM_COMPLETIONS_MAX_BATCHED_TOKENS \
           --max-model-len $$VLLM_COMPLETIONS_MAX_MODEL_LEN \
@@ -35,7 +33,6 @@ services:
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
-      - OMP_NUM_THREADS=1
       # Model config
       - MODEL_COMPLETIONS_NAME=Qwen/Qwen3-VL-4B-Instruct
       - GPU_TOTAL_GB=32
@@ -59,10 +56,11 @@ services:
     networks:
       - vllm-network
     restart: unless-stopped
-    shm_size: '4gb'
+    ipc: host
+    stop_grace_period: 30s
 
   vllm-ocr:
-    image: vllm/vllm-openai:latest
+    image: vllm-blackwell-nightly:latest
     container_name: vllm-ocr
     depends_on:
       vllm-completions:
@@ -76,16 +74,13 @@ services:
           --port 8102 \
           --host 0.0.0.0 \
           --gpu-memory-utilization $$GPU_UTIL \
-          --logits-processors vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor \
           --trust-remote-code \
           --disable-log-requests \
           --max-num-seqs $$VLLM_OCR_MAX_NUM_SEQS \
+          --max-num-batched-tokens $$VLLM_OCR_MAX_BATCHED_TOKENS \
           --max-model-len $$VLLM_OCR_MAX_MODEL_LEN \
           --dtype auto \
-          --enforce-eager \
-          --enable-request-id-headers \
-          --limit-mm-per-prompt '{"image":1}' \
-          --mm-processor-cache-gb 0
+          --enforce-eager
     ports:
       - "0.0.0.0:8102:8102"
     volumes:
@@ -95,13 +90,14 @@ services:
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_LOGGING_LEVEL=INFO
       - HF_HOME=/root/.cache/huggingface
-      - VLLM_MEDIA_URL_ALLOW_REDIRECTS=0
+      - OMP_NUM_THREADS=1
       # Model config
-      - MODEL_OCR_NAME=tencent/HunyuanOCR
+      - MODEL_OCR_NAME=zai-org/GLM-OCR
       - GPU_TOTAL_GB=32
-      - VLLM_OCR_GPU_GB=5
+      - VLLM_OCR_GPU_GB=4
       - VLLM_OCR_MAX_NUM_SEQS=64
-      - VLLM_OCR_MAX_MODEL_LEN=8192
+      - VLLM_OCR_MAX_BATCHED_TOKENS=8192
+      - VLLM_OCR_MAX_MODEL_LEN=4096
     deploy:
       resources:
         reservations:
@@ -118,7 +114,8 @@ services:
     networks:
       - vllm-network
     restart: unless-stopped
-    shm_size: '3gb'
+    ipc: host
+    stop_grace_period: 30s
 
   vllm-asr:
     build:
@@ -129,6 +126,7 @@ services:
     depends_on:
       vllm-ocr:
         condition: service_healthy
+    command: ["gunicorn", "-w", "1", "-b", "0.0.0.0:8103", "--timeout", "300", "--graceful-timeout", "120", "--keep-alive", "5", "--preload", "serve:create_app()"]
     ports:
       - "0.0.0.0:8103:8103"
     volumes:
@@ -167,7 +165,8 @@ services:
     networks:
       - vllm-network
     restart: unless-stopped
-    shm_size: '4gb'
+    shm_size: '1gb'
+    stop_grace_period: 120s
 
 networks:
   vllm-network:
