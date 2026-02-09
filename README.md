@@ -1,131 +1,88 @@
-# LiteLLM Local
+# vLLM Blackwell Nightly
 
-vLLM inference stack with LiteLLM gateway - OpenAI-compatible API for embeddings, chat, and OCR.
-
-## Models
-
-- **Embeddings** – Qwen3-Embedding-0.6B (1024 dims)
-- **Chat** – Qwen3-8B-FP8 (32K context, 8B params)
-- **OCR** – HunyuanOCR (vision-to-text)
-
-## Architecture
-
-```
-Client → LiteLLM Gateway :8200
-            ├─ vLLM Embedding :8100 (~15% GPU)
-            ├─ vLLM Completions :8101 (~70% GPU)
-            └─ vLLM OCR :8102 (~20% GPU)
-```
+vLLM deployment for RTX 5090 (Blackwell / sm_100) using CUDA 13.0.
 
 ## Quick Start
 
-### Prerequisites
-- Docker with GPU support (nvidia-docker2)
-- NVIDIA GPU with 24GB+ VRAM recommended
-- CUDA 12.1+ drivers
-
-### Installation
-
 ```bash
-# 1. Clone repository
-git clone https://github.com/simonnxren/litellm_local.git
-cd litellm_local
+# Start all services
+docker compose -f docker-compose.glm-ocr-qwen3-asr.yml up -d
 
-# 2. Configure environment (optional, uses defaults)
-cp .env.example .env
-
-# 3. Start services
-./llm.sh start
-
-# 4. Verify
-curl http://localhost:8200/health
+# Check status
+docker compose -f docker-compose.glm-ocr-qwen3-asr.yml ps
 ```
 
-### Management Commands
+## Services
 
+| Service | Port | Model | GPU Memory | Purpose |
+|---------|------|-------|------------|---------|
+| glm-ocr | 8080 | zai-org/GLM-OCR | 15% | OCR for images |
+| qwen3-vl-embedding | 8090 | shigureui/Qwen3-VL-Embedding-2B-FP8 | 15% | Multimodal embeddings |
+| qwen3-asr | 8000 | Qwen/Qwen3-ASR-1.7B | 20% | Speech recognition |
+| qwen3-vl-4b | 8070 | Qwen/Qwen3-VL-4B-Instruct-FP8 | 38% | Vision-language chat |
+
+**Total:** ~88% GPU memory utilization on 32GB RTX 5090
+
+## System Requirements
+
+- **GPU:** NVIDIA RTX 5090 (32GB)
+- **Driver:** 580.x+
+- **CUDA:** 13.0
+- **Image:** `vllm/vllm-openai:cu130-nightly`
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.glm-ocr-qwen3-asr.yml` | Main stack with all 4 services |
+| `Dockerfile.vllm-nightly` | Custom build (for reference) |
+| `quantize_glm_ocr_fp8.py` | FP8 quantization script |
+
+## API Usage
+
+### OCR (GLM-OCR)
 ```bash
-./llm.sh start          # Start vLLM services
-./llm.sh start ollama   # Use Ollama backend instead
-./llm.sh stop           # Stop all services
-./llm.sh restart        # Restart services
-./llm.sh status         # Show service status
-./llm.sh logs gateway   # Tail gateway logs
-./llm.sh info           # Show access info
-./llm.sh health         # Check service health
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "zai-org/GLM-OCR",
+    "messages": [{"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+      {"type": "text", "text": "OCR this image"}
+    ]}],
+    "max_tokens": 500
+  }'
 ```
 
-## LAN Access
-
-Services are accessible from any device on your local network:
-
+### ASR (Qwen3-ASR)
 ```bash
-# Check network configuration and get your IP
-./llm.sh info
-
-# Test from another device (replace with your IP)
-curl http://192.168.1.100:8200/health
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen/Qwen3-ASR-1.7B",
+    "messages": [{"role": "user", "content": [
+      {"type": "input_audio", "input_audio": {"data": "BASE64_WAV", "format": "wav"}},
+      {"type": "text", "text": "<|audio_bos|><|AUDIO|><|audio_eos|>"}
+    ]}],
+    "max_tokens": 500
+  }'
 ```
-
-**Firewall Configuration** (if needed):
-```bash
-# Ubuntu/Debian
-sudo ufw allow 8200/tcp  # LiteLLM Gateway
-sudo ufw allow 8100/tcp  # vLLM Embedding
-sudo ufw allow 8101/tcp  # vLLM Completions
-sudo ufw allow 8102/tcp  # vLLM OCR
-
-# Or allow from specific subnet only
-sudo ufw allow from 192.168.1.0/24 to any port 8200
-```
-
-**Usage from LAN devices**:
-```python
-# Replace localhost with server IP
-client = OpenAI(
-    base_url="http://192.168.1.100:8200/v1",
-    api_key="dummy"
-)
-```
-
-## Usage
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:8200/v1", api_key="dummy")
-
-# Embeddings
-response = client.embeddings.create(model="qwen3-embedding-0.6b", input="Hello")
-
-# Chat
-response = client.chat.completions.create(
-    model="qwen3-8b-fp8",
-    messages=[{"role": "user", "content": "Hello"}]
-)
-```
-
-See [API_USAGE_MINIMAL.md](API_USAGE_MINIMAL.md) for more examples.
-
-## API Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | Health check |
-| `GET /v1/models` | List models |
-| `POST /v1/embeddings` | Generate embeddings |
-| `POST /v1/chat/completions` | Chat (supports vision) |
-
-## Configuration
-
-See [.env.example](.env.example) for environment variables.
 
 ## Troubleshooting
 
-- **Services not starting**: `docker logs litellm-gateway`
-- **GPU errors**: `nvidia-smi`
-- **Out of memory**: Reduce GPU allocations in `.env`
+### Error 803: CUDA Driver Mismatch
+Use `vllm/vllm-openai:cu130-nightly` (not `nightly`)
 
-## License
+### libcuda.so Conflict
+Container startup removes compat libcuda:
+```bash
+rm -f /usr/local/cuda/compat/libcuda.so* && ldconfig
+```
+(Already in docker-compose entrypoint)
 
-MIT
-
+### New Model Architectures
+Install latest transformers:
+```bash
+pip install https://github.com/huggingface/transformers/archive/refs/heads/main.zip
+```
+(Already in docker-compose entrypoint)
