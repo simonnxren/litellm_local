@@ -1,0 +1,210 @@
+# Docker Compose - GLM-OCR + Qwen3-ASR + Qwen3-VL-Embedding Combined Services
+# GLM-OCR: port 8080 (OCR for images, using vLLM with FP8)
+# Qwen3-ASR: port 8000 (ASR with ForcedAligner for timestamps, using official image)
+# Qwen3-VL-Embedding: port 8090 (Multimodal embeddings, using FP8 quantized model)
+#
+# Run with: docker compose -f docker-compose.glm-ocr-qwen3-asr.yml up -d
+
+services:
+  glm-ocr:
+    image: vllm/vllm-openai:cu130-nightly
+    container_name: glm-ocr
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rm -f /usr/local/cuda/compat/libcuda.so* && ldconfig && \
+        pip install https://github.com/huggingface/transformers/archive/refs/heads/main.zip && \
+        vllm serve zai-org/GLM-OCR \
+          --port 8080 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization 0.15 \
+          --quantization fp8 \
+          --kv-cache-dtype fp8 \
+          --trust-remote-code \
+          --disable-log-requests \
+          --max-num-seqs 32 \
+          --max-num-batched-tokens 8192 \
+          --max-model-len 4096 \
+          --dtype auto \
+          --enforce-eager \
+          --allowed-local-media-path /
+    ports:
+      - "0.0.0.0:8080:8080"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - /tmp:/tmp:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
+    ipc: host
+    shm_size: '4gb'
+    stop_grace_period: 30s
+
+  qwen3-vl-embedding:
+    image: vllm/vllm-openai:cu130-nightly
+    container_name: qwen3-vl-embedding
+    depends_on:
+      glm-ocr:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rm -f /usr/local/cuda/compat/libcuda.so* && ldconfig && \
+        pip install https://github.com/huggingface/transformers/archive/refs/heads/main.zip && \
+        vllm serve shigureui/Qwen3-VL-Embedding-2B-FP8 \
+          --port 8090 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization 0.15 \
+          --kv-cache-dtype fp8 \
+          --trust-remote-code \
+          --disable-log-requests \
+          --max-num-seqs 64 \
+          --max-num-batched-tokens 8192 \
+          --max-model-len 3800 \
+          --dtype auto \
+          --enforce-eager \
+          --allowed-local-media-path /
+    ports:
+      - "0.0.0.0:8090:8090"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - /tmp:/tmp:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
+    ipc: host
+    shm_size: '4gb'
+    stop_grace_period: 30s
+
+  qwen3-asr:
+    image: vllm/vllm-openai:cu130-nightly
+    container_name: qwen3-asr
+    depends_on:
+      qwen3-vl-embedding:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rm -f /usr/local/cuda/compat/libcuda.so* && ldconfig && \
+        pip install librosa soundfile && \
+        pip install https://github.com/huggingface/transformers/archive/refs/heads/main.zip && \
+        python3 -m vllm.entrypoints.openai.api_server \
+        --model Qwen/Qwen3-ASR-1.7B \
+        --trust-remote-code \
+        --quantization fp8 \
+        --kv-cache-dtype fp8 \
+        --gpu-memory-utilization 0.2 \
+        --max-model-len 7000 \
+        --enforce-eager \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --allowed-local-media-path /
+    ports:
+      - "0.0.0.0:8000:8000"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - /home/simon/Desktop/projects/litellm_local/tests:/tests:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_HOME=/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
+    ipc: host
+    shm_size: '4gb'
+    stop_grace_period: 30s
+
+  qwen3-vl-4b:
+    image: vllm/vllm-openai:cu130-nightly
+    container_name: qwen3-vl-4b
+    depends_on:
+      qwen3-asr:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rm -f /usr/local/cuda/compat/libcuda.so* && ldconfig && \
+        pip install https://github.com/huggingface/transformers/archive/refs/heads/main.zip && \
+        vllm serve Qwen/Qwen3-VL-4B-Instruct-FP8 \
+          --port 8070 \
+          --host 0.0.0.0 \
+          --gpu-memory-utilization 0.38 \
+          --kv-cache-dtype fp8 \
+          --trust-remote-code \
+          --disable-log-requests \
+          --max-num-seqs 8 \
+          --max-num-batched-tokens 16384 \
+          --max-model-len 8192 \
+          --dtype auto \
+          --enforce-eager \
+          --allowed-local-media-path /
+    ports:
+      - "0.0.0.0:8070:8070"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - /tmp:/tmp:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_LOGGING_LEVEL=INFO
+      - HF_HOME=/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8070/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
+    ipc: host
+    shm_size: '4gb'
+    stop_grace_period: 30s
