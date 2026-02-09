@@ -1,945 +1,385 @@
 """
-LiteLLM Local - Python Client SDK
+LiteLLM Local - Direct Connection Client
 
-A unified client for multimodal embeddings, chat completions, and OCR
-via the LiteLLM gateway with OpenAI-compatible APIs.
-
-Quick Start:
-    from litellm_client import LiteLLMClient
-
-    client = LiteLLMClient()
-
-    # Text embeddings (2048 dims)
-    embedding = client.embed("Hello world")
-
-    # Image embeddings
-    embedding = client.embed_image("/path/to/photo.jpg")
-
-    # Chat completion
-    response = client.chat("What is 2+2?")
-
-    # OCR / vision
-    text = client.ocr("document.png")
-
-    # Audio transcription (ASR)
-    text = client.transcribe("speech.mp3")
-
-    # Audio transcription with timestamps
-    result = client.transcribe("speech.mp3", timestamps="segment")
-    for segment in result.segments:
-        print(f"[{segment['start']:.1f}s] {segment['text']}")
-
-Features:
-    - Multimodal embeddings (text, image, video) via Qwen3-VL-Embedding-2B
-    - Text embeddings (OpenAI-compatible)
-    - Chat completions with streaming support
-    - OCR with vision-language models
-    - Audio transcription with optional segment/word timestamps
-    - OpenAI-compatible client interface
-
-Convenience Functions:
-    from litellm_client import embed, embed_image, chat, ocr, transcribe
-
-    # These use a singleton client instance
-    embedding = embed("Hello world")
-    text = ocr("image.png")
-    text = transcribe("speech.mp3")
-
-See README.md for detailed documentation and model information.
+Connects directly to vLLM services without a central gateway:
+- Chat/Vision: Port 8070 (Qwen3-VL-4B)
+- OCR: Port 8080 (GLM-OCR)
+- Embeddings: Port 8090 (Qwen3-VL-Embedding)
+- ASR: Port 8000 (Qwen3-ASR)
 """
 
-from typing import Optional, Union, Iterator, cast, overload, Literal
-from pathlib import Path
-from dataclasses import dataclass, field
 import base64
-import time
-from functools import wraps
+import os
+import logging
+from pathlib import Path
+from typing import Union, Optional, Iterator, Literal, List, Dict, Any
+from typing_extensions import TypedDict
 
+try:
+    from openai import OpenAI
+    import httpx
+except ImportError:
+    raise ImportError("Install dependencies: pip install openai httpx")
 
-__all__ = [
-    "LiteLLMClient",
-    "TranscriptionResult",
-    "get_client",
-    "embed",
-    "embed_text",
-    "embed_image",
-    "chat",
-    "ocr",
-    "transcribe",
-]
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
+# Configuration with environment variable support
+SERVICES = {
+    "chat": {
+        "port": int(os.getenv("CHAT_PORT", 8070)),
+        "model": os.getenv("CHAT_MODEL", "Qwen/Qwen3-VL-4B-Instruct-FP8")
+    },
+    "ocr": {
+        "port": int(os.getenv("OCR_PORT", 8080)),
+        "model": os.getenv("OCR_MODEL", "zai-org/GLM-OCR")
+    },
+    "embed": {
+        "port": int(os.getenv("EMBED_PORT", 8090)),
+        "model": os.getenv("EMBED_MODEL", "shigureui/Qwen3-VL-Embedding-2B-FP8")
+    },
+    "asr": {
+        "port": int(os.getenv("ASR_PORT", 8000)),
+        "model": os.getenv("ASR_MODEL", "Qwen/Qwen3-ASR-1.7B")
+    },
+}
 
-# =============================================================================
-# DATA CLASSES
-# =============================================================================
-
-
-@dataclass
-class TranscriptionResult:
-    """
-    Result from audio transcription.
-
-    Attributes:
-        text: Full transcribed text
-        language: Detected or specified language
-        segments: List of segment dicts with timestamps (if requested)
-                  Each segment has: {"id": int, "start": float, "end": float, "text": str}
-        words: List of word dicts with timestamps (if requested)
-               Each word has: {"word": str, "start": float, "end": float}
-
-    Example:
-        >>> result = client.transcribe("speech.mp3", timestamps="segment")
-        >>> print(result.text)
-        "Hello world. How are you?"
-        >>> for seg in result.segments:
-        ...     print(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
-        [0.0s - 1.5s] Hello world.
-        [2.0s - 3.2s] How are you?
-    """
-
+# Type definitions for better type safety
+class TextEmbedInput(TypedDict):
     text: str
-    language: Optional[str] = None
-    segments: list[dict] = field(default_factory=list)
-    words: list[dict] = field(default_factory=list)
 
-    def __str__(self) -> str:
-        """Return the transcribed text when converted to string."""
-        return self.text
+class MultimodalEmbedInput(TypedDict):
+    text: str
+    image: str
 
-    @property
-    def duration(self) -> Optional[float]:
-        """Total audio duration in seconds (from last segment/word end time)."""
-        if self.segments:
-            return self.segments[-1].get("end")
-        if self.words:
-            return self.words[-1].get("end")
-        return None
+EmbedInput = Union[str, List[str], TextEmbedInput, List[TextEmbedInput], MultimodalEmbedInput, List[MultimodalEmbedInput]]
 
+def _get_client(service: str) -> OpenAI:
+    """Get OpenAI client for a specific service with timeout and retry configuration."""
+    port = SERVICES[service]["port"]
+    base_url = f"http://localhost:{port}/v1"
+    
+    logger.debug(f"Creating client for {service} service at {base_url}")
+    
+    return OpenAI(
+        base_url=base_url,
+        api_key="dummy",  # vLLM doesn't require real API keys
+        timeout=httpx.Timeout(30.0, connect=5.0),
+        max_retries=3
+    )
 
-class LiteLLMClient:
-    """Client SDK for LiteLLM Local services."""
+# =============================================================================
+# PUBLIC API
+# =============================================================================
 
-    def __init__(
-        self,
-        base_url: str = "http://localhost:8200/v1",
-        api_key: str = "dummy",
-        embedding_model: str = "embedding",
-        chat_model: str = "completions",
-        ocr_model: str = "ocr",
-    ):
-        """
-        Initialize the LiteLLM client.
-
-        Args:
-            base_url: LiteLLM gateway URL (default: http://localhost:8200/v1)
-            api_key: API key for authentication (default: "dummy" for local use)
-            embedding_model: Default model for embeddings (default: "embedding")
-            chat_model: Default model for chat (default: "completions")
-            ocr_model: Default model for OCR (default: "ocr")
-
-        Example:
-            >>> client = LiteLLMClient()
-            >>> client = LiteLLMClient(base_url="http://gateway:8200/v1")
-        """
-        try:
-            from openai import OpenAI
-        except ImportError:
-            raise ImportError("Please install openai: pip install openai")
-
-        self.client = OpenAI(base_url=base_url, api_key=api_key)
-        self.embedding_model = embedding_model
-        self.chat_model = chat_model
-        self.ocr_model = ocr_model
-
-    # =========================================================================
-    # EMBEDDINGS
-    # =========================================================================
-
-    def embed(
-        self,
-        input_data: Union[str, list[str], dict, list[dict]],
-        model: Optional[str] = None,
-    ) -> Union[list[float], list[list[float]]]:
-        """
-        Generate embeddings for text, images, or multimodal inputs.
-
-        Unified method supporting:
-        - Text embeddings: "Hello world" or ["text1", "text2"]
-        - Image embeddings: {"image": "/path/to/img.jpg"}
-        - Multimodal: {"text": "...", "image": "..."}
-        - Video embeddings: {"video": "/path/to/video.mp4"}
-
-        Args:
-            input_data: Content to embed (string, list of strings, or dict)
-            model: Optional model name override
-
-        Returns:
-            Single embedding (2048 dims) or list of embeddings
-
-        Examples:
-            >>> # Text
-            >>> emb = client.embed("Hello world")
-            >>>
-            >>> # Image
-            >>> emb = client.embed({"image": "photo.jpg"})
-            >>>
-            >>> # Text + Image
-            >>> emb = client.embed({
-            ...     "text": "A photo of",
-            ...     "image": "cat.jpg"
-            ... })
-            >>>
-            >>> # Batch
-            >>> embs = client.embed([
-            ...     {"text": "doc1"},
-            ...     {"image": "img1.jpg"},
-            ...     {"text": "query", "image": "img2.jpg"}
-            ... ])
-
-        Multimodal Format:
-            - {"text": "..."} - Text only
-            - {"text": "...", "instruction": "..."} - Text with instruction
-            - {"image": "path_or_url"} - Image only
-            - {"text": "...", "image": "..."} - Combined
-            - {"video": "path_or_url", "fps": 1, "max_frames": 10}
-
-        Note:
-            Default model outputs 2048-dimensional vectors.
-            Multimodal requires server support (Qwen3-VL-Embedding-2B).
-        """
-        # Validate input is not empty
-        if isinstance(input_data, list) and len(input_data) == 0:
-            raise ValueError("Input list cannot be empty")
-
-        is_multimodal = isinstance(input_data, dict) or (
-            isinstance(input_data, list)
-            and len(input_data) > 0
-            and isinstance(input_data[0], dict)
-        )
-
-        if is_multimodal:
-            # Narrow the type for multimodal data
-            multimodal_data: Union[dict, list[dict]] = input_data  # type: ignore
-            return self._embed_multimodal(multimodal_data, model)
-        else:
-            response = self.client.embeddings.create(
-                model=model or self.embedding_model,
-                input=input_data,
-            )
-            if isinstance(input_data, str):
-                return response.data[0].embedding
-            return [item.embedding for item in response.data]
-
-    def _embed_multimodal(
-        self,
-        input_data: Union[dict, list[dict]],
-        model: Optional[str] = None,
-    ) -> Union[list[float], list[list[float]]]:
-        """Internal: multimodal embeddings (dict format)."""
-        if isinstance(input_data, dict):
-            inputs = [input_data]
-            single_input = True
-        else:
-            inputs = input_data
-            single_input = False
-
-        response = self.client.embeddings.create(
-            model=model or self.embedding_model,
-            input=inputs,
-        )
-
-        embeddings = [item.embedding for item in response.data]
-
-        if single_input:
-            return embeddings[0]
-        return embeddings
-
-    def embed_text(
-        self,
-        text: Union[str, list[str]],
-        model: Optional[str] = None,
-    ) -> Union[list[float], list[list[float]]]:
-        """
-        Text-only embeddings.
-
-        Convenience method equivalent to embed() for text.
-
-        Args:
-            text: Text string or list of strings
-            model: Optional model override
-
-        Returns:
-            Single embedding or list of embeddings
-
-        Example:
-            >>> client.embed_text("Hello world")
-            >>> client.embed_text(["Hello", "World"])
-        """
-        return self.embed(text, model=model)
-
-    def embed_image(
-        self,
-        image: Union[str, Path],
-        instruction: Optional[str] = None,
-        model: Optional[str] = None,
-    ) -> list[float]:
-        """
-        Image embeddings for similarity search and retrieval.
-
-        Args:
-            image: File path, URL, or base64 encoded image
-            instruction: Optional instruction for the model
-            model: Optional model override
-
-        Returns:
-            Single embedding vector (2048 dimensions)
-
-        Example:
-            >>> client.embed_image("/path/to/photo.jpg")
-            >>> client.embed_image("https://example.com/img.png")
-            >>> client.embed_image(
-            ...     "document.jpg",
-            ...     instruction="Extract visual features"
-            ... )
-
-        Supported: PNG, JPEG, WebP, GIF (path, URL, or base64)
-        """
-        # Validate file exists if it's a path (not URL or base64)
-        image_str = str(image)
-        if not image_str.startswith(("http://", "https://", "data:image")):
-            image_path = Path(image)
-            if not image_path.exists():
-                raise FileNotFoundError(f"Image not found: {image}")
-
-        input_dict: dict = {"image": image_str}
-        if instruction:
-            input_dict["instruction"] = instruction
-        result = self.embed(input_dict, model=model)
-        return cast(list[float], result)
-
-    def embed_video(
-        self,
-        video: str,
-        fps: Optional[int] = None,
-        max_frames: Optional[int] = None,
-        instruction: Optional[str] = None,
-        model: Optional[str] = None,
-    ) -> list[float]:
-        """
-        Video embeddings for video search and analysis.
-
-        Args:
-            video: Video file path or URL
-            fps: Frames per second sampling (default: 1)
-            max_frames: Maximum frames to process
-            instruction: Optional instruction for the model
-            model: Optional model override
-
-        Returns:
-            Single embedding vector (2048 dimensions)
-
-        Example:
-            >>> client.embed_video("/path/to/video.mp4")
-            >>> client.embed_video("video.mp4", fps=2, max_frames=32)
-        """
-        input_dict: dict = {"video": video}
-        if fps is not None:
-            input_dict["fps"] = fps
-        if max_frames is not None:
-            input_dict["max_frames"] = max_frames
-        if instruction:
-            input_dict["instruction"] = instruction
-        result = self.embed(input_dict, model=model)
-        return cast(list[float], result)
-
-    # =========================================================================
-    # CHAT
-    # =========================================================================
-
-    def chat(
-        self,
-        message: str,
-        system: Optional[str] = None,
-        history: Optional[list[dict]] = None,
-        max_tokens: int = 1024,
-        temperature: float = 0.7,
-        stream: bool = False,
-        model: Optional[str] = None,
-        **kwargs,
-    ) -> Union[str, Iterator[str]]:
-        """
-        Chat completion with streaming support.
-
-        Args:
-            message: User message
-            system: Optional system prompt
-            history: Optional conversation history (OpenAI format)
-            max_tokens: Maximum response tokens (default: 1024)
-            temperature: Randomness 0.0-1.0 (default: 0.7)
-            stream: Return token iterator if True
-            model: Optional model override
-            **kwargs: Additional API parameters
-
-        Returns:
-            Response text, or iterator if streaming
-
-        Example:
-            >>> client.chat("What is Python?")
-            >>> client.chat("Hello", system="You are a pirate")
-            >>>
-            >>> # With history
-            >>> history = [
-            ...     {"role": "user", "content": "My name is Alice"},
-            ...     {"role": "assistant", "content": "Hi Alice!"}
-            ... ]
-            >>> client.chat("What's my name?", history=history)
-            >>>
-            >>> # Streaming
-            >>> for token in client.chat("Write a poem", stream=True):
-            ...     print(token, end="")
-        """
+def chat(
+    message: str,
+    image: Optional[Union[str, Path]] = None,
+    system: Optional[str] = None,
+    history: Optional[List[Dict]] = None,
+    stream: bool = False,
+    max_tokens: int = 1024,
+    temperature: float = 0.7,
+) -> Union[str, Iterator[str]]:
+    """
+    Chat with Qwen3-VL-4B model supporting text and image inputs.
+    
+    Args:
+        message (str): The user's text message
+        image (str|Path, optional): Path or URL to image file
+        system (str, optional): System prompt to set model behavior
+        history (List[Dict], optional): Previous conversation history
+        stream (bool): Whether to stream responses (default: False)
+        max_tokens (int): Maximum tokens in response (default: 1024)
+        temperature (float): Sampling temperature 0.0-2.0 (default: 0.7)
+        
+    Returns:
+        str|Iterator[str]: Complete response string or streaming iterator
+        
+    Raises:
+        FileNotFoundError: If image file doesn't exist
+        ConnectionError: If chat service is unreachable
+        RuntimeError: If service returns an error
+    """
+    logger.info(f"Chat request: {len(message)} chars" + (f", image: {image}" if image else ""))
+    
+    try:
+        client = _get_client("chat")
+        model = SERVICES["chat"]["model"]
+        
         messages = []
-
         if system:
             messages.append({"role": "system", "content": system})
-
         if history:
             messages.extend(history)
+            
+        content: List[Dict[str, Any]] = [{"type": "text", "text": message}]
+        
+        if image:
+            image_url = _process_image(image)
+            content.insert(0, {"type": "image_url", "image_url": {"url": image_url}})
+            
+        messages.append({"role": "user", "content": content})
 
-        messages.append({"role": "user", "content": message})
-
-        response = self.client.chat.completions.create(
-            model=model or self.chat_model,
+        response = client.chat.completions.create(
+            model=model,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
-            stream=stream,
-            **kwargs,
+            stream=stream
         )
 
         if stream:
-            return self._stream_response(response)
-        return response.choices[0].message.content  # type: ignore
+            return (chunk.choices[0].delta.content or "" for chunk in response)
+        
+        result = response.choices[0].message.content
+        logger.debug(f"Chat response: {len(result)} chars")
+        return result
+        
+    except httpx.ConnectError as e:
+        raise ConnectionError(f"Cannot connect to chat service: {e}")
+    except httpx.TimeoutException:
+        raise TimeoutError("Chat service timed out")
+    except Exception as e:
+        raise RuntimeError(f"Chat service error: {e}")
 
-    def _stream_response(self, stream) -> Iterator[str]:
-        """Yield tokens from a streaming response."""
-        for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
-
-    # =========================================================================
-    # OCR / VISION
-    # =========================================================================
-
-    def ocr(
-        self,
-        image: Union[str, Path, bytes],
-        prompt: str = "Extract all text from this image",
-        max_tokens: int = 2048,
-        model: Optional[str] = None,
-    ) -> str:
-        """
-        OCR text extraction from images.
-
-        Uses vision-language model to extract text from images.
-
-        Args:
-            image: File path, Path object, or raw bytes
-            prompt: Instruction for OCR (default: "Extract all text from this image")
-            max_tokens: Maximum response tokens (default: 2048)
-            model: Optional model override
-
-        Returns:
-            Extracted text from the image
-
-        Example:
-            >>> client.ocr("/path/to/document.png")
-            >>> client.ocr("receipt.jpg", prompt="Extract total amount and date")
-            >>>
-            >>> # From bytes
-            >>> with open("doc.png", "rb") as f:
-            ...     text = client.ocr(f.read())
-
-        Supported: PNG, JPEG, WebP
-        """
-        if isinstance(image, (str, Path)):
-            image_path = Path(image)
-            if not image_path.exists():
-                raise FileNotFoundError(f"Image not found: {image}")
-            with open(image_path, "rb") as f:
-                image_bytes = f.read()
-            suffix = image_path.suffix.lower()
-            mime_map = {
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".webp": "image/webp",
-            }
-            mime_type = mime_map.get(suffix, "image/png")
-        else:
-            image_bytes = image
-            mime_type = "image/png"
-
-        b64_image = base64.b64encode(image_bytes).decode()
-
-        response = self.client.chat.completions.create(
-            model=model or self.ocr_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{b64_image}"
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-            max_tokens=max_tokens,
-        )
-
-        return response.choices[0].message.content  # type: ignore
-
-    # =========================================================================
-    # UTILITIES
-    # =========================================================================
-
-    def list_models(self) -> list[str]:
-        """
-        List available models from the gateway.
-
-        Returns:
-            List of model ID strings
-
-        Example:
-            >>> models = client.list_models()
-            >>> print(models)  # ['embedding', 'completions', 'ocr', 'asr']
-        """
-        models = self.client.models.list()
-        return [m.id for m in models.data]
-
-    def health(self) -> bool:
-        """
-        Check if gateway service is healthy.
-
-        Returns:
-            True if service is responding, False otherwise
-
-        Example:
-            >>> if client.health():
-            ...     response = client.chat("Hello")
-        """
-        try:
-            self.client.models.list()
-            return True
-        except Exception:
-            return False
-
-    # =========================================================================
-    # ASR / AUDIO TRANSCRIPTION
-    # =========================================================================
-
-    @overload
-    def transcribe(
-        self,
-        audio: Union[str, Path],
-        *,
-        timestamps: None = None,
-        model: Optional[str] = None,
-        language: Optional[str] = None,
-    ) -> str: ...
-
-    @overload
-    def transcribe(
-        self,
-        audio: Union[str, Path],
-        *,
-        timestamps: Literal["segment", "word"],
-        model: Optional[str] = None,
-        language: Optional[str] = None,
-    ) -> TranscriptionResult: ...
-
-    def transcribe(
-        self,
-        audio: Union[str, Path],
-        *,
-        timestamps: Optional[Literal["segment", "word"]] = None,
-        model: Optional[str] = None,
-        language: Optional[str] = None,
-    ) -> Union[str, TranscriptionResult]:
-        """
-        Transcribe audio to text using ASR (Automatic Speech Recognition).
-
-        Args:
-            audio: Path to audio file (MP3, WAV, M4A, FLAC, OGG, etc.)
-            timestamps: Request timestamps - "segment" or "word" (default: None)
-                - None: Return plain text (str)
-                - "segment": Return TranscriptionResult with segment timestamps
-                - "word": Return TranscriptionResult with word timestamps
-            model: Model name (default: "asr" -> Qwen3-ASR)
-            language: Language hint (e.g., "English", "Chinese", "Japanese")
-
-        Returns:
-            - str: Plain transcribed text (when timestamps=None)
-            - TranscriptionResult: Object with text, segments/words, and language
-              (when timestamps="segment" or "word")
-
-        Examples:
-            Basic transcription (returns str):
-                >>> text = client.transcribe("speech.mp3")
-                >>> print(text)
-                "Hello world. How are you today?"
-
-            With segment timestamps (returns TranscriptionResult):
-                >>> result = client.transcribe("speech.mp3", timestamps="segment")
-                >>> print(result.text)
-                "Hello world. How are you today?"
-                >>> for seg in result.segments:
-                ...     print(f"[{seg['start']:.1f}s] {seg['text']}")
-                [0.0s] Hello world.
-                [1.8s] How are you today?
-
-            With word timestamps:
-                >>> result = client.transcribe("speech.mp3", timestamps="word")
-                >>> for word in result.words[:3]:
-                ...     print(f"{word['word']} ({word['start']:.2f}s)")
-                Hello (0.10s)
-                world (0.35s)
-                . (0.60s)
-
-            Specify language for non-English audio:
-                >>> text = client.transcribe("mandarin.mp3", language="Chinese")
-
-        Supported Audio Formats:
-            MP3, WAV, M4A, FLAC, OGG, WebM, and other common formats.
-
-        Notes:
-            - Segment timestamps group words into sentences/phrases based on
-              punctuation and silence gaps (similar to Whisper output).
-            - Word timestamps provide precise timing for each word.
-            - For long audio files (>60s), the server automatically uses chunked
-              processing to avoid memory issues while preserving timestamp accuracy.
-        """
-        audio_path = Path(audio)
-        if not audio_path.exists():
-            raise FileNotFoundError(f"Audio file not found: {audio}")
-
-        with open(audio_path, "rb") as f:
-            # Use httpx directly for multipart form data with custom fields
-            # because openai client doesn't support timestamp_granularities
-            import httpx
-
-            # Prepare form data
-            files = {"file": (audio_path.name, f, "audio/mpeg")}
-            data: dict = {"model": model or "asr"}
-
-            if language:
-                data["language"] = language
-
-            # Add timestamp granularity if requested
-            if timestamps:
-                data["timestamp_granularities"] = f'["{timestamps}"]'
-
-            # Make request directly to the ASR endpoint
-            # Extract base URL (remove /v1 suffix if present)
-            base = str(self.client.base_url).rstrip("/")
-            if base.endswith("/v1"):
-                base = base[:-3]
-            url = f"{base}/v1/audio/transcriptions"
-
-            response = httpx.post(
-                url,
-                files=files,
-                data=data,
-                timeout=600.0,  # 10 min timeout for long audio
-            )
-            response.raise_for_status()
-            result = response.json()
-
-        # Return appropriate type based on whether timestamps were requested
-        if timestamps is None:
-            return result.get("text", "")
-
-        return TranscriptionResult(
-            text=result.get("text", ""),
-            language=result.get("language"),
-            segments=result.get("segments", []),
-            words=result.get("words", []),
-        )
-
-
-# =============================================================================
-# CONVENIENCE FUNCTIONS (use singleton client)
-# =============================================================================
-
-_default_client: Optional[LiteLLMClient] = None
-
-
-def _with_retry(max_retries: int = 3, delay: float = 1.0):
-    """Decorator for retrying network operations."""
-
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(delay * (2**attempt))
-                        continue
-                    raise
-            return None
-
-        return wrapper
-
-    return decorator
-
-
-def get_client(base_url: str = "http://localhost:8200/v1") -> LiteLLMClient:
+def ocr(
+    image: Union[str, Path],
+    prompt: str = "Extract all text from this image",
+    max_tokens: int = 2048
+) -> str:
     """
-    Get or create singleton client instance.
-
+    Extract text using GLM-OCR model.
+    
     Args:
-        base_url: Gateway URL (default: http://localhost:8200/v1)
-
+        image (str|Path): Path or URL to image file
+        prompt (str): Instruction for OCR task (default: "Extract all text from this image")
+        max_tokens (int): Maximum tokens in response (default: 2048)
+        
     Returns:
-        Singleton LiteLLMClient instance
+        str: Extracted text from image
+        
+    Raises:
+        FileNotFoundError: If image file doesn't exist
+        ConnectionError: If OCR service is unreachable
+        RuntimeError: If service returns an error
     """
-    global _default_client
-    if _default_client is None:
-        _default_client = LiteLLMClient(base_url=base_url)
-    return _default_client
-
+    logger.info(f"OCR request for image: {image}")
+    
+    try:
+        client = _get_client("ocr")
+        model = SERVICES["ocr"]["model"]
+        
+        image_url = _process_image(image)
+        
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{
+                "role": "user", 
+                "content": [
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "text", "text": prompt}
+                ]
+            }],
+            max_tokens=max_tokens
+        )
+        
+        result = response.choices[0].message.content
+        logger.debug(f"OCR response: {len(result)} chars")
+        return result
+        
+    except httpx.ConnectError as e:
+        raise ConnectionError(f"Cannot connect to OCR service: {e}")
+    except httpx.TimeoutException:
+        raise TimeoutError("OCR service timed out")
+    except Exception as e:
+        raise RuntimeError(f"OCR service error: {e}")
 
 def embed(
-    input_data: Union[str, list[str], dict, list[dict]],
-) -> Union[list[float], list[list[float]]]:
+    input_data: EmbedInput
+) -> Union[List[float], List[List[float]]]:
     """
-    Generate embeddings (text, image, or multimodal).
-
-    Uses singleton client. Supports:
-    - Text: "Hello world" or ["text1", "text2"]
+    Generate embeddings using Qwen3-VL-Embedding (Text/Image/Multimodal).
+    
+    Input formats:
+    - Text: "Hello" or ["Hello", "World"]
     - Image: {"image": "path/to/img.jpg"}
-    - Multimodal: {"text": "...", "image": "..."}
-
-    Example:
-        >>> from litellm_client import embed
-        >>> embed("Hello world")
-        >>> embed({"image": "photo.jpg"})
-        >>> embed({"text": "A photo of", "image": "cat.jpg"})
-    """
-    return get_client().embed(input_data)
-
-
-def embed_text(text: Union[str, list[str]]) -> Union[list[float], list[list[float]]]:
-    """Text-only embeddings using singleton client."""
-    return get_client().embed_text(text)
-
-
-def embed_image(
-    image: Union[str, Path], instruction: Optional[str] = None
-) -> list[float]:
-    """
-    Image embeddings using singleton client.
-
-    Example:
-        >>> from litellm_client import embed_image
-        >>> embed_image("/path/to/photo.jpg")
-        >>> embed_image("https://example.com/img.png")
-    """
-    return get_client().embed_image(image, instruction=instruction)
-
-
-@overload
-def chat(message: str, *, stream: Literal[False] = False, **kwargs) -> str: ...
-
-
-@overload
-def chat(message: str, *, stream: Literal[True], **kwargs) -> Iterator[str]: ...
-
-
-def chat(message: str, **kwargs) -> Union[str, Iterator[str]]:
-    """
-    Chat completion using singleton client.
-
-    Example:
-        >>> from litellm_client import chat
-        >>> chat("What is Python?")
-        >>> chat("Hello", system="You are a pirate")
-    """
-    return get_client().chat(message, **kwargs)
-
-
-def ocr(image: Union[str, Path, bytes], **kwargs) -> str:
-    """
-    OCR text extraction using singleton client.
-
-    Example:
-        >>> from litellm_client import ocr
-        >>> ocr("document.png")
-        >>> ocr("receipt.jpg", prompt="Extract total amount")
-    """
-    return get_client().ocr(image, **kwargs)
-
-
-@overload
-def transcribe(
-    audio: Union[str, Path],
-    *,
-    timestamps: None = None,
-    language: Optional[str] = None,
-) -> str: ...
-
-
-@overload
-def transcribe(
-    audio: Union[str, Path],
-    *,
-    timestamps: Literal["segment", "word"],
-    language: Optional[str] = None,
-) -> TranscriptionResult: ...
-
-
-def transcribe(
-    audio: Union[str, Path],
-    *,
-    timestamps: Optional[Literal["segment", "word"]] = None,
-    language: Optional[str] = None,
-    **kwargs,
-) -> Union[str, TranscriptionResult]:
-    """
-    Transcribe audio to text using singleton client.
-
+    - Multimodal: {"text": "A cat", "image": "cat.jpg"}
+    
     Args:
-        audio: Path to audio file (MP3, WAV, M4A, FLAC, OGG, etc.)
-        timestamps: Request timestamps - "segment" or "word" (default: None)
-        language: Language hint (e.g., "English", "Chinese")
-
+        input_data: Input text, image, or multimodal data
+        
     Returns:
-        - str: Plain text (when timestamps=None)
-        - TranscriptionResult: With text + segments/words (when timestamps specified)
-
-    Examples:
-        >>> from litellm_client import transcribe
-        >>>
-        >>> # Basic - returns string
-        >>> text = transcribe("speech.mp3")
-        >>>
-        >>> # With segments - returns TranscriptionResult
-        >>> result = transcribe("speech.mp3", timestamps="segment")
-        >>> for seg in result.segments:
-        ...     print(f"[{seg['start']:.1f}s] {seg['text']}")
-        >>>
-        >>> # Non-English audio
-        >>> text = transcribe("mandarin.mp3", language="Chinese")
+        List[float]|List[List[float]]: Single embedding vector or list of vectors
+        
+    Raises:
+        FileNotFoundError: If image file doesn't exist
+        ConnectionError: If embedding service is unreachable
+        RuntimeError: If service returns an error
     """
-    return get_client().transcribe(
-        audio, timestamps=timestamps, language=language, **kwargs
-    )
+    logger.info(f"Embed request: {type(input_data).__name__}")
+    
+    try:
+        client = _get_client("embed")
+        model = SERVICES["embed"]["model"]
+        
+        # Normalize input to list
+        if isinstance(input_data, (str, dict)):
+            inputs = [input_data]
+            is_single = True
+        else:
+            inputs = input_data
+            is_single = False
+            
+        # Process images in inputs if present (assuming dict format for multimodal)
+        processed_inputs = []
+        for item in inputs:
+            if isinstance(item, dict) and "image" in item:
+                 # If local path, convert to data URI because server might be remote/container
+                 # Ideally the server supports base64, usually it does.
+                 # Note: For embedding server, we often pass the dict directly if using OpenAI format?
+                 # Standard OpenAI embedding doesn't support dict input officially, 
+                 # but vLLM VL embedding does. We assume it handles data URIs or paths.
+                 # Let's ensure paths are converted to data URIs if they are local files.
+                 item_copy = item.copy()
+                 if os.path.exists(item["image"]):
+                      item_copy["image"] = _process_image(item["image"])
+                 processed_inputs.append(item_copy)
+            else:
+                processed_inputs.append(item)
 
+        response = client.embeddings.create(model=model, input=processed_inputs)
+        embeddings = [d.embedding for d in response.data]
+        
+        result = embeddings[0] if is_single else embeddings
+        logger.debug(f"Embed response: {len(result) if is_single else f'{len(result)} vectors'}")
+        return result
+        
+    except httpx.ConnectError as e:
+        raise ConnectionError(f"Cannot connect to embedding service: {e}")
+    except httpx.TimeoutException:
+        raise TimeoutError("Embedding service timed out")
+    except Exception as e:
+        raise RuntimeError(f"Embedding service error: {e}")
+
+def transcribe(
+    audio: Union[str, Path],
+    language: Optional[str] = None,
+    timestamps: Optional[Literal["word", "segment"]] = None
+) -> Dict[str, Any]:
+    """
+    Transcribe audio using Qwen3-ASR.
+    
+    Args:
+        audio (str|Path): Path to audio file
+        language (str, optional): Language code (e.g., "en", "zh")
+        timestamps (Literal["word", "segment"], optional): Request word or segment timestamps
+        
+    Returns:
+        Dict[str, Any]: Dictionary with 'text' and optional 'chunks'/'words' if timestamps requested
+        
+    Raises:
+        FileNotFoundError: If audio file doesn't exist
+        ConnectionError: If ASR service is unreachable
+        RuntimeError: If service returns an error
+    """
+    path = Path(audio)
+    if not path.exists():
+        raise FileNotFoundError(f"Audio not found: {audio}")
+        
+    logger.info(f"ASR request: {path.name}" + (f", language: {language}" if language else ""))
+    
+    try:
+        # Qwen3-ASR via vLLM OpenAI API usually uses the standard /v1/audio/transcriptions
+        # But for complex timestamp params, sometimes direct requests are safer if the client lib creates issues.
+        # We will use standard OpenAI client first.
+        client = _get_client("asr")
+        model = SERVICES["asr"]["model"]
+        
+        with open(path, "rb") as f:
+            # Note: openai-python doesn't fully support all extra params for all backends
+            # but let's try standard create.
+            kwargs = {}
+            if language: kwargs["language"] = language
+            if timestamps: kwargs["timestamp_granularities"] = [timestamps] # List format for standard API
+            
+            response = client.audio.transcriptions.create(
+                model=model,
+                file=f,
+                response_format="verbose_json" if timestamps else "json",
+                **kwargs
+            )
+        
+        # Unpack response object to dict
+        if timestamps:
+            result = response.model_dump()
+        else:
+            result = {"text": response.text}
+            
+        logger.debug(f"ASR response: {len(result.get('text', ''))} chars")
+        return result
+        
+    except httpx.ConnectError as e:
+        raise ConnectionError(f"Cannot connect to ASR service: {e}")
+    except httpx.TimeoutException:
+        raise TimeoutError("ASR service timed out")
+    except Exception as e:
+        raise RuntimeError(f"ASR service error: {e}")
 
 # =============================================================================
-# CLI
+# HELPERS
 # =============================================================================
+
+def _process_image(image: Union[str, Path]) -> str:
+    """Convert image path/url to base64 data URI or return as-is."""
+    image_str = str(image)
+    if image_str.startswith(("http://", "https://", "data:")):
+        return image_str
+        
+    path = Path(image)
+    if not path.exists():
+        raise FileNotFoundError(f"Image not found: {image}")
+        
+    mime_type = "image/jpeg"
+    if path.suffix.lower() == ".png": mime_type = "image/png"
+    elif path.suffix.lower() == ".webp": mime_type = "image/webp"
+    
+    with open(path, "rb") as f:
+        data = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:{mime_type};base64,{data}"
+
+def health_check() -> Dict[str, bool]:
+    """
+    Check health status of all services.
+    
+    Returns:
+        Dict[str, bool]: Health status for each service
+    """
+    status = {}
+    for service_name in SERVICES.keys():
+        try:
+            client = _get_client(service_name)
+            # Simple health check - try to get model info
+            response = client.models.list()
+            status[service_name] = True
+            logger.debug(f"{service_name} service is healthy")
+        except Exception as e:
+            status[service_name] = False
+            logger.warning(f"{service_name} service is unhealthy: {e}")
+    
+    return status
 
 if __name__ == "__main__":
-    import argparse
-    import sys
-
-    parser = argparse.ArgumentParser(description="LiteLLM Local Client")
-    parser.add_argument("--url", default="http://localhost:8200/v1", help="Gateway URL")
-
-    subparsers = parser.add_subparsers(dest="command", help="Command")
-
-    # Chat command
-    chat_parser = subparsers.add_parser("chat", help="Chat with the model")
-    chat_parser.add_argument("message", help="Message to send")
-    chat_parser.add_argument("--system", help="System prompt")
-    chat_parser.add_argument("--stream", action="store_true", help="Stream response")
-
-    # Embed command
-    embed_parser = subparsers.add_parser("embed", help="Generate embeddings")
-    embed_parser.add_argument("text", help="Text to embed")
-
-    # OCR command
-    ocr_parser = subparsers.add_parser("ocr", help="Extract text from image")
-    ocr_parser.add_argument("image", help="Path to image file")
-    ocr_parser.add_argument("--prompt", default="Extract all text from this image")
-
-    # Transcribe command
-    transcribe_parser = subparsers.add_parser(
-        "transcribe", help="Transcribe audio to text"
-    )
-    transcribe_parser.add_argument("audio", help="Path to audio file")
-    transcribe_parser.add_argument(
-        "--language", help="Language (e.g., English, Chinese)"
-    )
-    transcribe_parser.add_argument(
-        "--timestamps",
-        choices=["segment", "word"],
-        help="Include timestamps (segment or word level)",
-    )
-
-    # Models command
-    subparsers.add_parser("models", help="List available models")
-
-    # Health command
-    subparsers.add_parser("health", help="Check service health")
-
-    args = parser.parse_args()
-
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
-
-    client = LiteLLMClient(base_url=args.url)
-
-    if args.command == "chat":
-        if args.stream:
-            for token in client.chat(args.message, system=args.system, stream=True):
-                print(token, end="", flush=True)
-            print()
-        else:
-            print(client.chat(args.message, system=args.system))
-
-    elif args.command == "embed":
-        embedding = client.embed(args.text)
-        print(f"Embedding ({len(embedding)} dims): {embedding[:5]}...")
-
-    elif args.command == "ocr":
-        print(client.ocr(args.image, prompt=args.prompt))
-
-    elif args.command == "transcribe":
-        result = client.transcribe(
-            args.audio, language=args.language, timestamps=args.timestamps
-        )
-        if args.timestamps:
-            # Print with timestamps
-            print(f"Language: {result.language}")
-            print(f"Duration: {result.duration:.1f}s" if result.duration else "")
-            print("-" * 40)
-            if args.timestamps == "segment":
-                for seg in result.segments:
-                    print(f"[{seg['start']:6.1f}s - {seg['end']:6.1f}s] {seg['text']}")
-            else:  # word
-                for word in result.words:
-                    print(f"[{word['start']:6.2f}s] {word['word']}")
-            print("-" * 40)
-            print(f"\nFull text:\n{result.text}")
-        else:
-            print(result)
-
-    elif args.command == "models":
-        for model in client.list_models():
-            print(f"  - {model}")
-
-    elif args.command == "health":
-        if client.health():
-            print("✅ Service is healthy")
-        else:
-            print("❌ Service is not responding")
-            sys.exit(1)
+    print("LiteLLM Client (Direct Mode)")
+    print(f"Chat:  Port {SERVICES['chat']['port']} ({SERVICES['chat']['model']})")
+    print(f"OCR:   Port {SERVICES['ocr']['port']} ({SERVICES['ocr']['model']})")
+    print(f"Embed: Port {SERVICES['embed']['port']} ({SERVICES['embed']['model']})")
+    print(f"ASR:   Port {SERVICES['asr']['port']} ({SERVICES['asr']['model']})")
+    
+    # Show health status
+    print("\nHealth Check:")
+    statuses = health_check()
+    for service, healthy in statuses.items():
+        status_str = "✅ UP" if healthy else "❌ DOWN"
+        print(f"  {service}: {status_str}")

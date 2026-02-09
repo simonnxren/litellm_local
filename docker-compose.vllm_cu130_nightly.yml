@@ -79,7 +79,8 @@ services:
           --max-model-len 3800 \
           --dtype auto \
           --enforce-eager \
-          --allowed-local-media-path /
+          --allowed-local-media-path / \
+          --runner pooling
     ports:
       - "0.0.0.0:8090:8090"
     volumes:
