@@ -81,7 +81,7 @@ EmbedInput = Union[
 ]
 
 # Pass-through endpoint for embeddings (routes directly to vLLM via gateway)
-_EMBED_URL = f"{GATEWAY_URL}/embeddings/v1/embeddings"
+_EMBED_URL = f"{GATEWAY_URL}/api/embeddings"
 
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────

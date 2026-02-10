@@ -110,7 +110,7 @@ docker compose -f docker-compose.vllm_cu130_nightly.yml down
 
 ### Client SDK (`litellm_client.py`)
 - **Gateway-Only**: All requests (chat, OCR, embeddings, ASR) route through the LiteLLM gateway
-- **Unified Embedding Endpoint**: Text and multimodal embeddings use a single gateway pass-through endpoint (`/embeddings/v1/embeddings`) that forwards requests directly to vLLM
+- **Unified Embedding Endpoint**: Text and multimodal embeddings use a single gateway pass-through endpoint (`/api/embeddings`) that forwards requests directly to vLLM
 - **Environment Variable Configuration**: Gateway URL and API key configurable via env vars
 - **Robust Error Handling**: Specific exceptions for different failure modes
 - **Comprehensive Logging**: Structured logging with INFO/DEBUG levels
