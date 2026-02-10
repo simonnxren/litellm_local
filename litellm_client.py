@@ -1,26 +1,38 @@
 """
 LiteLLM Local — Python SDK
 
-All requests go through the LiteLLM gateway (port 8400).
+All requests go through the LiteLLM gateway (default port 8400).
 The gateway provides: unified endpoint, caching, retries, logging, model aliasing.
 
 Usage:
     import litellm_client
+
     litellm_client.chat("Hello!")
+    litellm_client.chat("Describe this", image="photo.png")
     litellm_client.ocr("invoice.png")
     litellm_client.embed("search query")
+    litellm_client.embed(["batch", "of", "texts"])
     litellm_client.transcribe("meeting.wav")
 
 Environment variables:
-    GATEWAY_URL   — Gateway base URL (default: http://localhost:8400)
-    GATEWAY_KEY   — API key if master_key is set (default: not-needed)
+    GATEWAY_URL  — Gateway base URL (default: http://localhost:8400)
+    GATEWAY_KEY  — API key if master_key is set (default: not-needed)
 """
 
+__all__ = [
+    "chat", "ocr", "embed", "transcribe", "health_check",
+    "GATEWAY_URL", "GATEWAY_KEY", "MODELS",
+]
+__version__ = "1.0.0"
+
 import base64
-import os
 import logging
+import mimetypes
+import os
+import urllib.request
 from pathlib import Path
-from typing import Union, Optional, Iterator, Literal, List, Dict, Any
+from typing import Any, Dict, Generator, List, Literal, Optional, Union
+
 from typing_extensions import TypedDict
 
 try:
@@ -30,14 +42,14 @@ except ImportError:
     raise ImportError("Install dependencies: pip install openai httpx")
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
+# Library convention: only define a logger; callers configure logging themselves.
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8400")
 GATEWAY_KEY = os.getenv("GATEWAY_KEY", "not-needed")
 
-# Model aliases — must match litellm_config.yaml
+# Model aliases — must match litellm_config.yaml model_name entries
 MODELS = {
     "chat": "chat",           # → Qwen/Qwen3-VL-4B-Instruct-FP8 on :8070
     "ocr": "ocr",             # → zai-org/GLM-OCR on :8080
@@ -45,7 +57,12 @@ MODELS = {
     "asr": "asr",             # → Qwen/Qwen3-ASR-1.7B on :8000
 }
 
-# Type definitions
+# Timeouts — must be >= gateway's request_timeout (300s in litellm_config.yaml).
+# Audio/image uploads are large; the previous 60s caused premature client-side timeouts.
+_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
+
+# ─── Type definitions ─────────────────────────────────────────────────────────
+
 class TextEmbedInput(TypedDict):
     text: str
 
@@ -62,16 +79,51 @@ EmbedInput = Union[
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────
 
-def _get_client(service: str) -> OpenAI:
-    """Return an OpenAI client pointed at the LiteLLM gateway."""
-    logger.debug(f"[gateway] {service} → {GATEWAY_URL}")
-    return OpenAI(base_url=f"{GATEWAY_URL}/v1", api_key=GATEWAY_KEY,
-                  timeout=httpx.Timeout(60.0, connect=10.0), max_retries=3)
+_client: Optional[OpenAI] = None
+
+
+def _get_client() -> OpenAI:
+    """Return a cached OpenAI client pointed at the LiteLLM gateway.
+
+    A single shared client is reused across all calls to benefit from httpx
+    connection pooling.  Call ``_reset_client()`` after changing ``GATEWAY_URL``
+    or ``GATEWAY_KEY`` at runtime.
+    """
+    global _client
+    if _client is None:
+        _client = OpenAI(
+            base_url=f"{GATEWAY_URL}/v1",
+            api_key=GATEWAY_KEY,
+            timeout=_TIMEOUT,
+            max_retries=2,  # gateway does its own retries; keep client retries low
+        )
+        logger.debug("Client initialized → %s", GATEWAY_URL)
+    return _client
+
+
+def _reset_client() -> None:
+    """Discard the cached client so the next call creates a fresh one."""
+    global _client
+    _client = None
 
 
 def _model(service: str) -> str:
     """Return the gateway model alias for a service."""
     return MODELS[service]
+
+
+# Common MIME types for images; falls back to mimetypes module for others.
+_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".svg": "image/svg+xml",
+}
 
 
 def _process_image(image: Union[str, Path]) -> str:
@@ -83,12 +135,7 @@ def _process_image(image: Union[str, Path]) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Image not found: {image}")
     suffix = path.suffix.lower()
-    if suffix == ".png":
-        mime = "image/png"
-    elif suffix == ".webp":
-        mime = "image/webp"
-    else:
-        mime = "image/jpeg"
+    mime = _IMAGE_MIME.get(suffix) or mimetypes.guess_type(str(path))[0] or "image/jpeg"
     data = base64.b64encode(path.read_bytes()).decode()
     return f"data:{mime};base64,{data}"
 
@@ -101,11 +148,11 @@ def chat(
     message: str,
     image: Optional[Union[str, Path]] = None,
     system: Optional[str] = None,
-    history: Optional[List[Dict]] = None,
+    history: Optional[List[Dict[str, Any]]] = None,
     stream: bool = False,
     max_tokens: int = 1024,
     temperature: float = 0.7,
-) -> Union[str, Iterator[str]]:
+) -> Union[str, Generator[str, None, None]]:
     """
     Chat with the vision-language model.
 
@@ -119,11 +166,16 @@ def chat(
         temperature: Sampling temperature.
 
     Returns:
-        Full response string, or an iterator of chunks when streaming.
+        Full response string, or a generator of chunks when streaming.
+
+    Raises:
+        ConnectionError: Gateway/service unreachable.
+        TimeoutError:    Request exceeded timeout.
+        RuntimeError:    Any other API error.
     """
-    logger.info(f"Chat: {len(message)} chars" + (f", image={image}" if image else ""))
+    logger.info("Chat: %d chars%s", len(message), f", image={image}" if image else "")
     try:
-        client = _get_client("chat")
+        client = _get_client()
         msgs: List[Dict[str, Any]] = []
         if system:
             msgs.append({"role": "system", "content": system})
@@ -139,15 +191,24 @@ def chat(
             max_tokens=max_tokens, temperature=temperature, stream=stream,
         )
         if stream:
-            return (c.choices[0].delta.content or "" for c in resp)
-        return resp.choices[0].message.content
+            # Wrap in generator so exceptions during iteration are properly caught
+            def _stream_chunks() -> Generator[str, None, None]:
+                try:
+                    for chunk in resp:
+                        yield chunk.choices[0].delta.content or ""
+                except httpx.ConnectError as exc:
+                    raise ConnectionError(f"Chat stream interrupted: {exc}") from exc
+                except httpx.TimeoutException as exc:
+                    raise TimeoutError("Chat stream timed out") from exc
+            return _stream_chunks()
+        return resp.choices[0].message.content or ""
 
     except httpx.ConnectError as e:
-        raise ConnectionError(f"Chat service unreachable: {e}")
-    except httpx.TimeoutException:
-        raise TimeoutError("Chat service timed out")
+        raise ConnectionError(f"Chat service unreachable: {e}") from e
+    except httpx.TimeoutException as e:
+        raise TimeoutError("Chat service timed out") from e
     except Exception as e:
-        raise RuntimeError(f"Chat error: {e}")
+        raise RuntimeError(f"Chat error: {e}") from e
 
 
 def ocr(
@@ -165,10 +226,15 @@ def ocr(
 
     Returns:
         Extracted text.
+
+    Raises:
+        ConnectionError: Gateway/service unreachable.
+        TimeoutError:    Request exceeded timeout.
+        RuntimeError:    Any other API error.
     """
-    logger.info(f"OCR: {image}")
+    logger.info("OCR: %s", image)
     try:
-        client = _get_client("ocr")
+        client = _get_client()
         resp = client.chat.completions.create(
             model=_model("ocr"),
             messages=[{"role": "user", "content": [
@@ -177,14 +243,14 @@ def ocr(
             ]}],
             max_tokens=max_tokens,
         )
-        return resp.choices[0].message.content
+        return resp.choices[0].message.content or ""
 
     except httpx.ConnectError as e:
-        raise ConnectionError(f"OCR service unreachable: {e}")
-    except httpx.TimeoutException:
-        raise TimeoutError("OCR service timed out")
+        raise ConnectionError(f"OCR service unreachable: {e}") from e
+    except httpx.TimeoutException as e:
+        raise TimeoutError("OCR service timed out") from e
     except Exception as e:
-        raise RuntimeError(f"OCR error: {e}")
+        raise RuntimeError(f"OCR error: {e}") from e
 
 
 def embed(input_data: EmbedInput) -> Union[List[float], List[List[float]]]:
@@ -196,10 +262,15 @@ def embed(input_data: EmbedInput) -> Union[List[float], List[List[float]]]:
 
     Returns:
         Single embedding vector, or list of vectors for batch input.
+
+    Raises:
+        ConnectionError: Gateway/service unreachable.
+        TimeoutError:    Request exceeded timeout.
+        RuntimeError:    Any other API error.
     """
-    logger.info(f"Embed: {type(input_data).__name__}")
+    logger.info("Embed: %s", type(input_data).__name__)
     try:
-        client = _get_client("embed")
+        client = _get_client()
 
         # Normalize to list
         if isinstance(input_data, (str, dict)):
@@ -225,11 +296,11 @@ def embed(input_data: EmbedInput) -> Union[List[float], List[List[float]]]:
         return vecs[0] if single else vecs
 
     except httpx.ConnectError as e:
-        raise ConnectionError(f"Embedding service unreachable: {e}")
-    except httpx.TimeoutException:
-        raise TimeoutError("Embedding service timed out")
+        raise ConnectionError(f"Embedding service unreachable: {e}") from e
+    except httpx.TimeoutException as e:
+        raise TimeoutError("Embedding service timed out") from e
     except Exception as e:
-        raise RuntimeError(f"Embedding error: {e}")
+        raise RuntimeError(f"Embedding error: {e}") from e
 
 
 def transcribe(
@@ -247,14 +318,20 @@ def transcribe(
 
     Returns:
         Dict with 'text' key; includes timestamp data if requested.
+
+    Raises:
+        FileNotFoundError: Audio file does not exist.
+        ConnectionError:   Gateway/service unreachable.
+        TimeoutError:      Request exceeded timeout.
+        RuntimeError:      Any other API error.
     """
     path = Path(audio)
     if not path.exists():
         raise FileNotFoundError(f"Audio not found: {audio}")
-    logger.info(f"ASR: {path.name}" + (f", lang={language}" if language else ""))
+    logger.info("ASR: %s%s", path.name, f", lang={language}" if language else "")
 
     try:
-        client = _get_client("asr")
+        client = _get_client()
         kwargs: Dict[str, Any] = {}
         if language:
             kwargs["language"] = language
@@ -270,11 +347,11 @@ def transcribe(
         return resp.model_dump() if timestamps else {"text": resp.text}
 
     except httpx.ConnectError as e:
-        raise ConnectionError(f"ASR service unreachable: {e}")
-    except httpx.TimeoutException:
-        raise TimeoutError("ASR service timed out")
+        raise ConnectionError(f"ASR service unreachable: {e}") from e
+    except httpx.TimeoutException as e:
+        raise TimeoutError("ASR service timed out") from e
     except Exception as e:
-        raise RuntimeError(f"ASR error: {e}")
+        raise RuntimeError(f"ASR error: {e}") from e
 
 
 # =============================================================================
@@ -286,26 +363,33 @@ def health_check() -> Dict[str, Any]:
     Check health of the gateway and all backend services.
 
     Returns:
-        Dict mapping service name → bool (healthy or not).
+        Dict with 'gateway' bool and per-service bools.
     """
     status: Dict[str, Any] = {}
 
+    # 1. Check gateway is alive
     try:
-        import urllib.request
         urllib.request.urlopen(f"{GATEWAY_URL}/health", timeout=5)
         status["gateway"] = True
     except Exception as e:
         status["gateway"] = False
-        logger.warning(f"Gateway unhealthy: {e}")
-        return status  # No point checking backends
-
-    for svc in MODELS:
-        try:
-            _get_client(svc).models.list()
-            status[svc] = True
-        except Exception as e:
+        logger.warning("Gateway unhealthy: %s", e)
+        for svc in MODELS:
             status[svc] = False
-            logger.warning(f"{svc} unhealthy: {e}")
+        return status
+
+    # 2. Check each model alias is registered (single API call)
+    try:
+        models = _get_client().models.list()
+        registered = {m.id for m in models.data}
+        for svc, alias in MODELS.items():
+            status[svc] = alias in registered
+            if not status[svc]:
+                logger.warning("%s model alias '%s' not registered", svc, alias)
+    except Exception as e:
+        for svc in MODELS:
+            status[svc] = False
+        logger.warning("Models check failed: %s", e)
 
     return status
 
@@ -315,7 +399,8 @@ def health_check() -> Dict[str, Any]:
 # =============================================================================
 
 if __name__ == "__main__":
-    print(f"LiteLLM Client — Gateway: {GATEWAY_URL}")
+    logging.basicConfig(level=logging.INFO)  # Only configure logging when run directly
+    print(f"LiteLLM Client v{__version__} — Gateway: {GATEWAY_URL}")
     for svc, alias in MODELS.items():
         print(f"  {svc:6s} → model=\"{alias}\"")
 
