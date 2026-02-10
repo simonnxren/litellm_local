@@ -6,7 +6,7 @@ GPU-accelerated inference on RTX 5090 (32GB VRAM) with a unified OpenAI-compatib
 
 | Service | Port | Model | GPU Memory | Purpose |
 |---------|------|-------|------------|---------|
-| LiteLLM Gateway | 4000 | — (proxy) | — | Unified API, caching, retries |
+| LiteLLM Gateway | 8400 | — (proxy) | — | Unified API, caching, retries |
 | Chat / Vision | 8070 | Qwen/Qwen3-VL-4B-Instruct-FP8 | 38% (~12 GB) | Chat and image understanding |
 | OCR | 8080 | zai-org/GLM-OCR | 15% (~5 GB) | Image text extraction |
 | Embeddings | 8090 | shigureui/Qwen3-VL-Embedding-2B-FP8 | 15% (~5 GB) | Multimodal embeddings (2048d) |
@@ -24,8 +24,8 @@ docker compose -f docker-compose.vllm_cu130_nightly.yml up -d
 docker compose -f docker-compose.gateway.yml up -d
 
 # 3. Verify
-curl http://localhost:4000/health
-curl http://localhost:4000/v1/models
+curl http://localhost:8400/health
+curl http://localhost:8400/v1/models
 ```
 
 ## Usage
@@ -55,12 +55,12 @@ print(result["text"])
 
 ```bash
 # Chat
-curl http://localhost:4000/v1/chat/completions \
+curl http://localhost:8400/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "chat", "messages": [{"role": "user", "content": "Hello"}]}'
 
 # Embeddings
-curl http://localhost:4000/v1/embeddings \
+curl http://localhost:8400/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{"model": "embedding", "input": "Hello world"}'
 ```
@@ -72,7 +72,7 @@ curl http://localhost:4000/v1/embeddings \
 | File | Purpose |
 |------|---------|
 | `docker-compose.vllm_cu130_nightly.yml` | vLLM services — 4 models on single GPU |
-| `docker-compose.gateway.yml` | LiteLLM gateway on port 4000 |
+| `docker-compose.gateway.yml` | LiteLLM gateway on port 8400 |
 | `litellm_config.yaml` | Gateway routing, caching, retry config |
 | `litellm_client.py` | Python SDK (gateway-only) |
 | `test_gateway.py` | Test suite using real media assets |
@@ -101,7 +101,7 @@ Tests use real screenshots and audio files from `assets/`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GATEWAY_URL` | `http://localhost:4000` | LiteLLM gateway URL |
+| `GATEWAY_URL` | `http://localhost:8400` | LiteLLM gateway URL |
 | `GATEWAY_KEY` | `not-needed` | API key (if `master_key` is set) |
 
 ## System Requirements

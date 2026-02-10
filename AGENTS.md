@@ -4,7 +4,7 @@
 
 **litellm_local** is a self-hosted, GPU-accelerated AI inference stack that exposes OpenAI-compatible APIs for four capabilities: **chat completions**, **OCR**, **audio transcription (ASR)**, and **multimodal embeddings**. It runs on a single-machine setup (RTX 5090 with 32GB VRAM) with all services orchestrated via Docker Compose.
 
-The goal: run powerful open-source models locally with a single unified API endpoint. All requests flow through a LiteLLM gateway on port 4000 which provides caching, retries, logging, and model aliasing.
+The goal: run powerful open-source models locally with a single unified API endpoint. All requests flow through a LiteLLM gateway on port 8400 which provides caching, retries, logging, and model aliasing.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ The goal: run powerful open-source models locally with a single unified API endp
 Clients (Python SDK, curl, any OpenAI client)
     │
     ▼
-LiteLLM Gateway (:4000)  — Unified API, caching, retries, logging
+LiteLLM Gateway (:8400)  — Unified API, caching, retries, logging
     │
     ├── model="chat"       → Chat Service       (:8070)  Qwen3-VL-4B-Instruct-FP8   12 GB
     ├── model="ocr"        → OCR Service        (:8080)  zai-org/GLM-OCR             4 GB
@@ -40,7 +40,7 @@ All services run on a single RTX 5090 GPU with dynamic memory allocation via vLL
 | File | Purpose |
 |------|---------|
 | `docker-compose.vllm_cu130_nightly.yml` | **Main compose file** - Single machine orchestration with all 4 services. Sequential startup with health checks. |
-| `docker-compose.gateway.yml` | **Gateway compose file** - LiteLLM proxy on port 4000, routes to all vLLM services via host networking. |
+| `docker-compose.gateway.yml` | **Gateway compose file** - LiteLLM proxy on port 8400, routes to all vLLM services via host networking. |
 
 ### Client SDK
 
@@ -62,7 +62,7 @@ All services run on a single RTX 5090 GPU with dynamic memory allocation via vLL
 
 | Port | Service | Model | Status |
 |------|---------|-------|--------|
-| 4000 | LiteLLM Gateway | — (proxy) | ✅ Operational |
+| 8400 | LiteLLM Gateway | — (proxy) | ✓ Operational |
 | 8070 | Chat | Qwen3-VL-4B-Instruct-FP8 | ✅ Operational |
 | 8080 | OCR | zai-org/GLM-OCR | ✅ Operational |
 | 8090 | Embedding | Qwen3-VL-Embedding-2B-FP8 | ✅ Operational (2048 dims) |
@@ -93,11 +93,11 @@ docker compose -f docker-compose.vllm_cu130_nightly.yml ps
 docker compose -f docker-compose.gateway.yml ps
 
 # 4. Test gateway
-curl http://localhost:4000/health
-curl http://localhost:4000/v1/models
+curl http://localhost:8400/health
+curl http://localhost:8400/v1/models
 
 # 5. Use via gateway (single endpoint)
-curl http://localhost:4000/v1/chat/completions \
+curl http://localhost:8400/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "chat", "messages": [{"role": "user", "content": "Hello"}]}'
 
@@ -126,7 +126,7 @@ docker compose -f docker-compose.vllm_cu130_nightly.yml down
 
 ### Recent Improvements
 - ✅ **Gateway-Only Architecture**: All SDK requests route through LiteLLM gateway (no direct mode)
-- ✅ **LiteLLM Gateway**: Unified API on port 4000 with model aliasing, caching, retries, and logging
+- ✅ **LiteLLM Gateway**: Unified API on port 8400 with model aliasing, caching, retries, and logging
 - ✅ **Full Embedding Functionality Restored**: Added `--runner pooling` flag for proper 2048-dimensional embeddings
 - ✅ **Real Asset Testing**: Tests use actual screenshots and audio files from `assets/`
 - ✅ **Production Ready**: Proper error handling, logging, and configuration
@@ -150,7 +150,7 @@ These were discovered and resolved during development:
 ## Coding Conventions
 
 - **Docker images**: Use `vllm/vllm-openai:cu130-nightly` for Blackwell compatibility
-- **Gateway-only**: All client requests go through LiteLLM gateway on :4000
+- **Gateway-only**: All client requests go through LiteLLM gateway on :8400
 - **Environment variables**: `GATEWAY_URL`, `GATEWAY_KEY` for SDK config
 - **GPU allocation**: Dynamic via `--gpu-memory-utilization` (0.0-1.0 fraction)
 - **Service dependencies**: Sequential startup with health checks via `depends_on`
@@ -161,7 +161,7 @@ These were discovered and resolved during development:
 
 When working on this project:
 
-- **Architecture**: Gateway-only — all requests go through LiteLLM on :4000
+- **Architecture**: Gateway-only — all requests go through LiteLLM on :8400
 - **Configuration**: Environment variables preferred over hardcoded values
 - **Error Handling**: Specific exceptions with meaningful messages
 - **Testing**: `pytest test_gateway.py -v` or `python test_gateway.py`

@@ -1,7 +1,7 @@
 """
 LiteLLM Local — Python SDK
 
-All requests go through the LiteLLM gateway (port 4000).
+All requests go through the LiteLLM gateway (port 8400).
 The gateway provides: unified endpoint, caching, retries, logging, model aliasing.
 
 Usage:
@@ -12,7 +12,7 @@ Usage:
     litellm_client.transcribe("meeting.wav")
 
 Environment variables:
-    GATEWAY_URL   — Gateway base URL (default: http://localhost:4000)
+    GATEWAY_URL   — Gateway base URL (default: http://localhost:8400)
     GATEWAY_KEY   — API key if master_key is set (default: not-needed)
 """
 
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:4000")
+GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8400")
 GATEWAY_KEY = os.getenv("GATEWAY_KEY", "not-needed")
 
 # Model aliases — must match litellm_config.yaml
