@@ -149,6 +149,17 @@ These were discovered and resolved during development:
 4. **Embedding Service Not Working**: Missing `--runner pooling` flag caused 404 errors on `/v1/embeddings` endpoint.
    - **Fix**: Added `--runner pooling` to embedding service configuration
 
+5. **Multimodal Embeddings via Gateway**: LiteLLM's built-in `/v1/embeddings` proxy only forwards the `input` field (standard OpenAI format). vLLM multimodal embeddings require a `messages` field (`EmbeddingChatRequest` format) which LiteLLM strips. The built-in `/vllm/*` pass-through was also tested but malforms URLs (double `/v1/v1/` prefix).
+   - **Fix**: Added a `pass_through_endpoints` entry in `litellm_config.yaml` mapping `/api/embeddings` → `http://localhost:8090/v1/embeddings`. This forwards the request body to vLLM unchanged.
+   - **Result**: Two embedding paths exist on the gateway:
+
+     | Path | Handler | `input` field | `messages` field (multimodal) |
+     |------|---------|:---:|:---:|
+     | `/v1/embeddings` | LiteLLM built-in proxy | ✅ | ❌ |
+     | `/api/embeddings` | Pass-through → vLLM | ✅ | ✅ |
+
+   - The Python SDK (`litellm_client.py`) uses `/api/embeddings` exclusively for both text and multimodal. `/v1/embeddings` remains available for standard OpenAI clients that only need text embeddings.
+
 ## Coding Conventions
 
 - **Docker images**: Use `vllm/vllm-openai:cu130-nightly` for Blackwell compatibility
