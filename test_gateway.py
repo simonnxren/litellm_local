@@ -181,6 +181,24 @@ class TestGatewayEmbedding:
         sim = dot / (na * nb)
         assert sim >= 0.99, f"Cosine similarity = {sim:.4f}"
 
+    def test_multimodal_text_image(self, sample_image):
+        """Multimodal embedding with text + image through gateway."""
+        emb = litellm_client.embed({"text": "a screenshot", "image": sample_image})
+        assert isinstance(emb, list) and len(emb) >= 128
+        assert all(isinstance(x, float) for x in emb)
+
+    def test_multimodal_differs_from_text(self, sample_image):
+        """Multimodal embedding should differ from text-only embedding."""
+        text_emb = litellm_client.embed("a screenshot")
+        multi_emb = litellm_client.embed({"text": "a screenshot", "image": sample_image})
+        assert len(text_emb) == len(multi_emb), "Dimension mismatch"
+        # They share the same text but the image should shift the vector
+        dot = sum(x * y for x, y in zip(text_emb, multi_emb))
+        nt = sum(x * x for x in text_emb) ** 0.5
+        nm = sum(x * x for x in multi_emb) ** 0.5
+        sim = dot / (nt * nm)
+        assert sim < 0.99, f"Vectors too similar ({sim:.4f}); image had no effect"
+
 
 # ============================================================================
 # ASR THROUGH GATEWAY
@@ -282,6 +300,8 @@ def main():
     run("single text", TestGatewayEmbedding().test_single_text)
     run("batch text", TestGatewayEmbedding().test_batch_text)
     run("consistency", TestGatewayEmbedding().test_consistency)
+    run("multimodal text+image", TestGatewayEmbedding().test_multimodal_text_image, SAMPLE_IMAGE)
+    run("multimodal vs text-only", TestGatewayEmbedding().test_multimodal_differs_from_text, SAMPLE_IMAGE)
 
     # OCR
     print("--- OCR ---")
