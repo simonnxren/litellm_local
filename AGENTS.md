@@ -2,9 +2,9 @@
 
 ## What This Project Is
 
-**litellm_local** is a self-hosted, GPU-accelerated AI inference stack that exposes OpenAI-compatible APIs for four capabilities: **chat completions**, **OCR**, **audio transcription (ASR)**, and **multimodal embeddings**. It runs on a two-machine LAN setup (Machine A with an RTX 5090, Machine B with a smaller GPU) behind a unified LiteLLM gateway proxy.
+**litellm_local** is a self-hosted, GPU-accelerated AI inference stack that exposes OpenAI-compatible APIs for four capabilities: **chat completions**, **OCR**, **audio transcription (ASR)**, and **multimodal embeddings**. It runs on a single-machine setup (RTX 5090 with 32GB VRAM) with all services orchestrated via Docker Compose.
 
-The goal: run powerful open-source models locally with a single OpenAI-compatible endpoint, no cloud APIs needed.
+The goal: run powerful open-source models locally with a single unified API endpoint. All requests flow through a LiteLLM gateway on port 4000 which provides caching, retries, logging, and model aliasing.
 
 ## Architecture
 
@@ -12,28 +12,26 @@ The goal: run powerful open-source models locally with a single OpenAI-compatibl
 Clients (Python SDK, curl, any OpenAI client)
     │
     ▼
-LiteLLM Gateway (:8200)              ← docker-compose.litellm.yml
-    │   Routes by model name, load-balances, retries
+LiteLLM Gateway (:4000)  — Unified API, caching, retries, logging
     │
-    ├── Machine A  (RTX 5090, 32 GB VRAM)    ← docker-compose.vllma.yml
-    │   ├── vllm-completions (:8101)  — Qwen3-VL-4B-Instruct  (15 GB)
-    │   ├── vllm-ocr         (:8102)  — zai-org/GLM-OCR        (4 GB)
-    │   └── vllm-asr         (:8103)  — Qwen3-ASR-0.6B + ForcedAligner (custom image)
-    │
-    └── Machine B  (8 GB GPU)                ← docker-compose.vllmb.yml
-        └── vllm-embedding   (:8100)  — Qwen3-VL-Embedding-2B  (2 GB)
+    ├── model="chat"       → Chat Service       (:8070)  Qwen3-VL-4B-Instruct-FP8   12 GB
+    ├── model="ocr"        → OCR Service        (:8080)  zai-org/GLM-OCR             4 GB
+    ├── model="embedding"  → Embedding Service  (:8090)  Qwen3-VL-Embedding-2B-FP8   4 GB
+    └── model="asr"        → ASR Service        (:8000)  Qwen3-ASR-1.7B              6 GB
 ```
 
-There is also a fallback compose for Machine B using a GTX 1070 Ti (`docker-compose.1070b.yml`, `qwen3vl-embedding-server/`) which runs a custom FastAPI embedding server instead of vLLM (Pascal GPUs lack sm_100/flash-attention support).
+All services run on a single RTX 5090 GPU with dynamic memory allocation via vLLM's `--gpu-memory-utilization` parameter. Services start sequentially with health checks to prevent VRAM contention.
 
 ## Key Models
 
-| Capability | Model | Size | Port | Backend |
-|------------|-------|------|------|---------|
-| Chat / Vision | `Qwen/Qwen3-VL-4B-Instruct` | 4B | 8101 | vLLM nightly (cu130) |
-| OCR | `zai-org/GLM-OCR` | ~4B | 8102 | vLLM nightly (cu130) |
-| ASR (speech→text) | `Qwen/Qwen3-ASR-0.6B` + `Qwen3-ForcedAligner-0.6B` | 0.6B each | 8103 | Transformers + Gunicorn |
-| Embeddings (multimodal) | `Qwen/Qwen3-VL-Embedding-2B` | 2B | 8100 | vLLM or custom FastAPI |
+| Capability | Model | Size | Port | Backend | VRAM |
+|------------|-------|------|------|---------|------|
+| Chat / Vision | `Qwen/Qwen3-VL-4B-Instruct-FP8` | 4B | 8070 | vLLM nightly (cu130) | 12 GB |
+| OCR | `zai-org/GLM-OCR` | ~4B | 8080 | vLLM nightly (cu130) | 4 GB |
+| ASR (speech→text) | `Qwen/Qwen3-ASR-1.7B` | 1.7B | 8000 | vLLM nightly (cu130) | 6 GB |
+| Embeddings (multimodal) | `shigureui/Qwen3-VL-Embedding-2B-FP8` | 2B | 8090 | vLLM nightly (cu130) + pooling runner | 4 GB |
+
+**Total VRAM Usage**: ~28 GB (88% of 32GB RTX 5090)
 
 ## File Map
 
@@ -41,106 +39,132 @@ There is also a fallback compose for Machine B using a GTX 1070 Ti (`docker-comp
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile.vllm-nightly` | Builds vLLM image from nightly wheels on CUDA 13.0 for Blackwell GPUs. Handles compat-lib removal for host driver passthrough. |
-| `Dockerfile.vllm` | Builds vLLM from source (slower, used as fallback). |
-| `docker-compose.vllma.yml` | Machine A services: completions, OCR, ASR. Shared GPU with dynamic `gpu-memory-utilization`. |
-| `docker-compose.vllmb.yml` | Machine B services: embedding via vLLM. |
-| `docker-compose.1070b.yml` | Machine B fallback: custom FastAPI embedding server for Pascal GPUs. |
-| `docker-compose.litellm.yml` | LiteLLM gateway proxy. Inline config routes model names to backends. |
-| `qwen3-asr/Dockerfile` | ASR image extending vllm-blackwell-nightly with qwen-asr, flask, gunicorn. |
-| `qwen3-asr/serve.py` | Flask app: `/v1/audio/transcriptions` endpoint with word/segment timestamps. |
-| `qwen3vl-embedding-server/Dockerfile` | Custom embedding server image for Pascal GPUs (CUDA 12.4, float16). |
-| `qwen3vl-embedding-server/server.py` | FastAPI server: `/v1/embeddings` with multimodal support (text, image, video). |
-
-### Management Scripts
-
-| File | Purpose |
-|------|---------|
-| `vllma.sh` | Start/stop/status/logs for Machine A services (completions + OCR + ASR). |
-| `vllmb.sh` | Start/stop/status/logs for Machine B services (embedding). |
-| `litellm.sh` | Start/stop/status/logs for the LiteLLM gateway. |
-| `1070b.sh` | Start/stop/build/test for the GTX 1070 Ti fallback embedding server. |
+| `docker-compose.vllm_cu130_nightly.yml` | **Main compose file** - Single machine orchestration with all 4 services. Sequential startup with health checks. |
+| `docker-compose.gateway.yml` | **Gateway compose file** - LiteLLM proxy on port 4000, routes to all vLLM services via host networking. |
 
 ### Client SDK
 
 | File | Purpose |
 |------|---------|
-| `litellm_client.py` | Full Python SDK (946 lines). Unified client for embed, chat, OCR, transcribe. Includes CLI, streaming, retries, convenience functions. |
-| `CLIENT_REVIEW.md` | Production review of the client SDK. Status: approved (grade A-). |
+| `litellm_client.py` | **Gateway-only Python SDK**. Routes all requests through the LiteLLM gateway. Supports chat, OCR, embeddings, ASR with streaming. |
+| `test_gateway.py` | **Test suite**. Pytest-based tests for all 4 services through the gateway, using real media assets. |
 
-### Tests
+### Configuration & Testing
 
 | File | Purpose |
 |------|---------|
-| `tests/test_models.py` | OpenAI API compliance tests (embeddings, completions, OCR, health). |
-| `tests/test_client_with_files.py` | Integration tests using real image/audio files against live gateway. |
-| `pytest.ini` | Pytest config with `integration` and `compliance` markers. |
+| `pytest.ini` | Pytest configuration with custom markers (`integration`, `embedding`, `chat`, `ocr`, `asr`) |
+| `litellm_config.yaml` | LiteLLM gateway configuration — model routing, caching, retry settings |
+| `.gitignore` | Git ignore rules including assets, logs, and environment files |
+| `.dockerignore` | Docker ignore rules for build context optimization |
 
 ## Port Map
 
-| Port | Service | Location |
-|------|---------|----------|
-| 8100 | Embedding | Machine B |
-| 8101 | Completions | Machine A |
-| 8102 | OCR | Machine A |
-| 8103 | ASR | Machine A |
-| 8200 | LiteLLM Gateway | Either machine |
+| Port | Service | Model | Status |
+|------|---------|-------|--------|
+| 4000 | LiteLLM Gateway | — (proxy) | ✅ Operational |
+| 8070 | Chat | Qwen3-VL-4B-Instruct-FP8 | ✅ Operational |
+| 8080 | OCR | zai-org/GLM-OCR | ✅ Operational |
+| 8090 | Embedding | Qwen3-VL-Embedding-2B-FP8 | ✅ Operational (2048 dims) |
+| 8000 | ASR | Qwen3-ASR-1.7B | ✅ Operational |
 
-## GPU Memory Budget (Machine A — 32 GB)
+## GPU Memory Allocation (RTX 5090 - 32GB)
 
-Services share one GPU via vLLM's `--gpu-memory-utilization` (fraction of total VRAM):
+Services share GPU via vLLM's dynamic memory management:
 
-- **Completions**: 15 GB → `gpu_util = 15/32 ≈ 0.47`
-- **OCR**: 4 GB → `gpu_util = 4/32 = 0.125`
-- **ASR**: Uses Transformers (not vLLM), loads into remaining VRAM
+- **Chat Service**: `--gpu-memory-utilization 0.38` (~12.16 GB)
+- **OCR Service**: `--gpu-memory-utilization 0.15` (~4.8 GB)
+- **Embedding Service**: `--gpu-memory-utilization 0.15` (~4.8 GB)
+- **ASR Service**: `--gpu-memory-utilization 0.20` (~6.4 GB)
 
-Services start sequentially (depends_on with healthcheck) to avoid VRAM contention during model loading.
+Services start sequentially with health checks to prevent VRAM contention during model loading.
 
 ## Build & Deploy
 
 ```bash
-# 1. Build the vLLM nightly image (Blackwell / CUDA 13.0)
-docker build -f Dockerfile.vllm-nightly -t vllm-blackwell-nightly:latest .
+# 1. Start vLLM services
+docker compose -f docker-compose.vllm_cu130_nightly.yml up -d
 
-# 2. Create shared network
-docker network create vllm-shared-network 2>/dev/null || true
+# 2. Start LiteLLM gateway (after vLLM services are healthy)
+docker compose -f docker-compose.gateway.yml up -d
 
-# 3. Start Machine A services
-./vllma.sh start        # or: docker compose -f docker-compose.vllma.yml up -d
+# 3. Check all services
+docker compose -f docker-compose.vllm_cu130_nightly.yml ps
+docker compose -f docker-compose.gateway.yml ps
 
-# 4. Start Machine B services (on machine B)
-./vllmb.sh start        # or: docker compose -f docker-compose.vllmb.yml up -d
+# 4. Test gateway
+curl http://localhost:4000/health
+curl http://localhost:4000/v1/models
 
-# 5. Start the gateway (on whichever machine)
-./litellm.sh start      # or: docker compose -f docker-compose.litellm.yml up -d
+# 5. Use via gateway (single endpoint)
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "chat", "messages": [{"role": "user", "content": "Hello"}]}'
+
+# 6. Stop everything
+docker compose -f docker-compose.gateway.yml down
+docker compose -f docker-compose.vllm_cu130_nightly.yml down
 ```
 
-## Known Blackwell (RTX 5090) Issues
+## Key Features & Enhancements
+
+### Client SDK (`litellm_client.py`)
+- **Gateway-Only**: All requests route through LiteLLM gateway
+- **Environment Variable Configuration**: Gateway URL and API key configurable via env vars
+- **Robust Error Handling**: Specific exceptions for different failure modes
+- **Comprehensive Logging**: Structured logging with INFO/DEBUG levels
+- **Type Safety**: TypedDict definitions and proper type hints
+- **Health Checks**: Built-in service status monitoring
+- **Streaming Support**: Async streaming for chat completions
+- **Batch Operations**: Efficient batch processing for embeddings
+
+### Testing Framework
+- **Unified Test Suite**: Single file (`test_gateway.py`) with real media assets from `assets/`
+- **Pytest Integration**: Markers for selective test execution
+- **Comprehensive Coverage**: Tests for all 4 services plus integration tests
+- **Standalone Runner**: `python test_gateway.py` for quick validation without pytest
+
+### Recent Improvements
+- ✅ **Gateway-Only Architecture**: All SDK requests route through LiteLLM gateway (no direct mode)
+- ✅ **LiteLLM Gateway**: Unified API on port 4000 with model aliasing, caching, retries, and logging
+- ✅ **Full Embedding Functionality Restored**: Added `--runner pooling` flag for proper 2048-dimensional embeddings
+- ✅ **Real Asset Testing**: Tests use actual screenshots and audio files from `assets/`
+- ✅ **Production Ready**: Proper error handling, logging, and configuration
+
+## Known Issues & Solutions
 
 These were discovered and resolved during development:
 
-1. **cu128 vs cu130 torch mismatch**: `uv pip install vllm` without `--prerelease=allow` picks stable PyPI vLLM (cu128 torch) instead of nightly cu130. Fix: use `--prerelease=allow` with nightly index as primary.
+1. **cu128 vs cu130 torch mismatch**: `uv pip install vllm` without `--prerelease=allow` picks stable PyPI vLLM (cu128 torch) instead of nightly cu130. 
+   - **Fix**: Use official `vllm/vllm-openai:cu130-nightly` Docker image
 
-2. **compat libcuda.so shadowing host driver**: The CUDA 13.0 container base image ships `/usr/local/cuda/compat/libcuda.so.580.x` which is too old for Blackwell. ldconfig picks it over the host's 590.x driver. Fix: `rm -f /usr/local/cuda/compat/libcuda.so*` in Dockerfile before `ldconfig`.
+2. **compat libcuda.so shadowing host driver**: The CUDA 13.0 container base image ships `/usr/local/cuda/compat/libcuda.so.580.x` which is too old for Blackwell. ldconfig picks it over the host's 590.x driver.
+   - **Fix**: `rm -f /usr/local/cuda/compat/libcuda.so*` in Dockerfile before `ldconfig` (already in compose entrypoint)
 
-3. **FlashAttention segfault on sm_100**: FlashAttention's precompiled CUDA kernels don't support Blackwell compute capability 10.0. Crashes in `flash::mha_varlen_fwd` during encoder cache profiling. Fix: use `--attention-backend FLASHINFER` flag on vLLM serve commands.
+3. **FlashAttention segfault on sm_100**: FlashAttention's precompiled CUDA kernels don't support Blackwell compute capability 10.0. Crashes in `flash::mha_varlen_fwd` during encoder cache profiling.
+   - **Fix**: Use `--attention-backend FLASHINFER` flag on vLLM serve commands (handled automatically in nightly image)
+
+4. **Embedding Service Not Working**: Missing `--runner pooling` flag caused 404 errors on `/v1/embeddings` endpoint.
+   - **Fix**: Added `--runner pooling` to embedding service configuration
 
 ## Coding Conventions
 
-- **Docker images** are tagged `*-nightly:latest` for nightly builds, plain `:latest` for source builds.
-- **Environment variables** in compose files use `$$` escaping (compose syntax) and are evaluated at container startup via inline bash.
-- **GPU allocation** is computed dynamically: `GPU_UTIL = SERVICE_GPU_GB / GPU_TOTAL_GB`.
-- **Model aliases** in LiteLLM config: short names (`completions`, `ocr`, `embedding`, `asr`) map to full HuggingFace model IDs.
-- **Client SDK** uses `openai` library under the hood; ASR uses raw `httpx` for multipart file upload.
-- **Tests** require live services. Run with `pytest -m integration` or `pytest -m compliance`.
+- **Docker images**: Use `vllm/vllm-openai:cu130-nightly` for Blackwell compatibility
+- **Gateway-only**: All client requests go through LiteLLM gateway on :4000
+- **Environment variables**: `GATEWAY_URL`, `GATEWAY_KEY` for SDK config
+- **GPU allocation**: Dynamic via `--gpu-memory-utilization` (0.0-1.0 fraction)
+- **Service dependencies**: Sequential startup with health checks via `depends_on`
+- **Testing**: Pytest with custom markers for selective execution
+- **Logging**: Python logging module with structured INFO/DEBUG levels
 
 ## Agent Guidelines
 
 When working on this project:
 
-- **Before editing compose files**: Read the current file first — it uses multi-line bash `command` blocks with `$$` variable escaping that are easy to break.
-- **Before editing Dockerfiles**: The nightly Dockerfile (`Dockerfile.vllm-nightly`) is the active one. `Dockerfile.vllm` (from-source) is the fallback.
-- **GPU constraints**: All Machine A services share 32 GB. Any new service needs a VRAM budget that fits within the remaining headroom.
-- **Testing changes**: After compose changes, `docker compose -f <file> up -d` then check logs with `docker logs <container> --tail 50`.
-- **Network**: All services communicate over `vllm-shared-network` (external Docker network). The gateway resolves service hostnames within this network.
-- **The ASR service** is special — it does NOT use vLLM for inference. It uses HuggingFace Transformers with a Flask/Gunicorn server, but builds on top of the vllm-blackwell-nightly base image for CUDA compatibility.
+- **Architecture**: Gateway-only — all requests go through LiteLLM on :4000
+- **Configuration**: Environment variables preferred over hardcoded values
+- **Error Handling**: Specific exceptions with meaningful messages
+- **Testing**: `pytest test_gateway.py -v` or `python test_gateway.py`
+- **GPU Management**: Monitor VRAM usage — current allocation is ~90% of 32GB
+- **Model Updates**: FP8 quantized models for optimal performance on RTX 5090
+- **Documentation**: Keep AGENTS.md and README.md synchronized with current implementation

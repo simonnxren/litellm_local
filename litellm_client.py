@@ -1,11 +1,19 @@
 """
-LiteLLM Local - Direct Connection Client
+LiteLLM Local — Python SDK
 
-Connects directly to vLLM services without a central gateway:
-- Chat/Vision: Port 8070 (Qwen3-VL-4B)
-- OCR: Port 8080 (GLM-OCR)
-- Embeddings: Port 8090 (Qwen3-VL-Embedding)
-- ASR: Port 8000 (Qwen3-ASR)
+All requests go through the LiteLLM gateway (port 4000).
+The gateway provides: unified endpoint, caching, retries, logging, model aliasing.
+
+Usage:
+    import litellm_client
+    litellm_client.chat("Hello!")
+    litellm_client.ocr("invoice.png")
+    litellm_client.embed("search query")
+    litellm_client.transcribe("meeting.wav")
+
+Environment variables:
+    GATEWAY_URL   — Gateway base URL (default: http://localhost:4000)
+    GATEWAY_KEY   — API key if master_key is set (default: not-needed)
 """
 
 import base64
@@ -21,31 +29,23 @@ try:
 except ImportError:
     raise ImportError("Install dependencies: pip install openai httpx")
 
-# Configure logging
+# ─── Logging ──────────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Configuration with environment variable support
-SERVICES = {
-    "chat": {
-        "port": int(os.getenv("CHAT_PORT", 8070)),
-        "model": os.getenv("CHAT_MODEL", "Qwen/Qwen3-VL-4B-Instruct-FP8")
-    },
-    "ocr": {
-        "port": int(os.getenv("OCR_PORT", 8080)),
-        "model": os.getenv("OCR_MODEL", "zai-org/GLM-OCR")
-    },
-    "embed": {
-        "port": int(os.getenv("EMBED_PORT", 8090)),
-        "model": os.getenv("EMBED_MODEL", "shigureui/Qwen3-VL-Embedding-2B-FP8")
-    },
-    "asr": {
-        "port": int(os.getenv("ASR_PORT", 8000)),
-        "model": os.getenv("ASR_MODEL", "Qwen/Qwen3-ASR-1.7B")
-    },
+# ─── Configuration ────────────────────────────────────────────────────────────
+GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:4000")
+GATEWAY_KEY = os.getenv("GATEWAY_KEY", "not-needed")
+
+# Model aliases — must match litellm_config.yaml
+MODELS = {
+    "chat": "chat",           # → Qwen/Qwen3-VL-4B-Instruct-FP8 on :8070
+    "ocr": "ocr",             # → zai-org/GLM-OCR on :8080
+    "embed": "embedding",     # → Qwen3-VL-Embedding-2B-FP8 on :8090
+    "asr": "asr",             # → Qwen/Qwen3-ASR-1.7B on :8000
 }
 
-# Type definitions for better type safety
+# Type definitions
 class TextEmbedInput(TypedDict):
     text: str
 
@@ -53,21 +53,45 @@ class MultimodalEmbedInput(TypedDict):
     text: str
     image: str
 
-EmbedInput = Union[str, List[str], TextEmbedInput, List[TextEmbedInput], MultimodalEmbedInput, List[MultimodalEmbedInput]]
+EmbedInput = Union[
+    str, List[str],
+    TextEmbedInput, List[TextEmbedInput],
+    MultimodalEmbedInput, List[MultimodalEmbedInput],
+]
+
+
+# ─── Internal helpers ─────────────────────────────────────────────────────────
 
 def _get_client(service: str) -> OpenAI:
-    """Get OpenAI client for a specific service with timeout and retry configuration."""
-    port = SERVICES[service]["port"]
-    base_url = f"http://localhost:{port}/v1"
-    
-    logger.debug(f"Creating client for {service} service at {base_url}")
-    
-    return OpenAI(
-        base_url=base_url,
-        api_key="dummy",  # vLLM doesn't require real API keys
-        timeout=httpx.Timeout(30.0, connect=5.0),
-        max_retries=3
-    )
+    """Return an OpenAI client pointed at the LiteLLM gateway."""
+    logger.debug(f"[gateway] {service} → {GATEWAY_URL}")
+    return OpenAI(base_url=f"{GATEWAY_URL}/v1", api_key=GATEWAY_KEY,
+                  timeout=httpx.Timeout(60.0, connect=10.0), max_retries=3)
+
+
+def _model(service: str) -> str:
+    """Return the gateway model alias for a service."""
+    return MODELS[service]
+
+
+def _process_image(image: Union[str, Path]) -> str:
+    """Convert local image path to base64 data URI; pass URLs through."""
+    image_str = str(image)
+    if image_str.startswith(("http://", "https://", "data:")):
+        return image_str
+    path = Path(image)
+    if not path.exists():
+        raise FileNotFoundError(f"Image not found: {image}")
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        mime = "image/png"
+    elif suffix == ".webp":
+        mime = "image/webp"
+    else:
+        mime = "image/jpeg"
+    data = base64.b64encode(path.read_bytes()).decode()
+    return f"data:{mime};base64,{data}"
+
 
 # =============================================================================
 # PUBLIC API
@@ -83,303 +107,218 @@ def chat(
     temperature: float = 0.7,
 ) -> Union[str, Iterator[str]]:
     """
-    Chat with Qwen3-VL-4B model supporting text and image inputs.
-    
+    Chat with the vision-language model.
+
     Args:
-        message (str): The user's text message
-        image (str|Path, optional): Path or URL to image file
-        system (str, optional): System prompt to set model behavior
-        history (List[Dict], optional): Previous conversation history
-        stream (bool): Whether to stream responses (default: False)
-        max_tokens (int): Maximum tokens in response (default: 1024)
-        temperature (float): Sampling temperature 0.0-2.0 (default: 0.7)
-        
+        message:     User text.
+        image:       Optional image path/URL for vision queries.
+        system:      System prompt.
+        history:     Prior messages in OpenAI format.
+        stream:      Stream token-by-token.
+        max_tokens:  Max response length.
+        temperature: Sampling temperature.
+
     Returns:
-        str|Iterator[str]: Complete response string or streaming iterator
-        
-    Raises:
-        FileNotFoundError: If image file doesn't exist
-        ConnectionError: If chat service is unreachable
-        RuntimeError: If service returns an error
+        Full response string, or an iterator of chunks when streaming.
     """
-    logger.info(f"Chat request: {len(message)} chars" + (f", image: {image}" if image else ""))
-    
+    logger.info(f"Chat: {len(message)} chars" + (f", image={image}" if image else ""))
     try:
         client = _get_client("chat")
-        model = SERVICES["chat"]["model"]
-        
-        messages = []
+        msgs: List[Dict[str, Any]] = []
         if system:
-            messages.append({"role": "system", "content": system})
+            msgs.append({"role": "system", "content": system})
         if history:
-            messages.extend(history)
-            
+            msgs.extend(history)
         content: List[Dict[str, Any]] = [{"type": "text", "text": message}]
-        
         if image:
-            image_url = _process_image(image)
-            content.insert(0, {"type": "image_url", "image_url": {"url": image_url}})
-            
-        messages.append({"role": "user", "content": content})
+            content.insert(0, {"type": "image_url", "image_url": {"url": _process_image(image)}})
+        msgs.append({"role": "user", "content": content})
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=stream
+        resp = client.chat.completions.create(
+            model=_model("chat"), messages=msgs,
+            max_tokens=max_tokens, temperature=temperature, stream=stream,
         )
-
         if stream:
-            return (chunk.choices[0].delta.content or "" for chunk in response)
-        
-        result = response.choices[0].message.content
-        logger.debug(f"Chat response: {len(result)} chars")
-        return result
-        
+            return (c.choices[0].delta.content or "" for c in resp)
+        return resp.choices[0].message.content
+
     except httpx.ConnectError as e:
-        raise ConnectionError(f"Cannot connect to chat service: {e}")
+        raise ConnectionError(f"Chat service unreachable: {e}")
     except httpx.TimeoutException:
         raise TimeoutError("Chat service timed out")
     except Exception as e:
-        raise RuntimeError(f"Chat service error: {e}")
+        raise RuntimeError(f"Chat error: {e}")
+
 
 def ocr(
     image: Union[str, Path],
     prompt: str = "Extract all text from this image",
-    max_tokens: int = 2048
+    max_tokens: int = 2048,
 ) -> str:
     """
-    Extract text using GLM-OCR model.
-    
+    Extract text from an image using the OCR model.
+
     Args:
-        image (str|Path): Path or URL to image file
-        prompt (str): Instruction for OCR task (default: "Extract all text from this image")
-        max_tokens (int): Maximum tokens in response (default: 2048)
-        
+        image:      Image path or URL.
+        prompt:     Instruction for the OCR task.
+        max_tokens: Max response length.
+
     Returns:
-        str: Extracted text from image
-        
-    Raises:
-        FileNotFoundError: If image file doesn't exist
-        ConnectionError: If OCR service is unreachable
-        RuntimeError: If service returns an error
+        Extracted text.
     """
-    logger.info(f"OCR request for image: {image}")
-    
+    logger.info(f"OCR: {image}")
     try:
         client = _get_client("ocr")
-        model = SERVICES["ocr"]["model"]
-        
-        image_url = _process_image(image)
-        
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{
-                "role": "user", 
-                "content": [
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                    {"type": "text", "text": prompt}
-                ]
-            }],
-            max_tokens=max_tokens
+        resp = client.chat.completions.create(
+            model=_model("ocr"),
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": _process_image(image)}},
+                {"type": "text", "text": prompt},
+            ]}],
+            max_tokens=max_tokens,
         )
-        
-        result = response.choices[0].message.content
-        logger.debug(f"OCR response: {len(result)} chars")
-        return result
-        
+        return resp.choices[0].message.content
+
     except httpx.ConnectError as e:
-        raise ConnectionError(f"Cannot connect to OCR service: {e}")
+        raise ConnectionError(f"OCR service unreachable: {e}")
     except httpx.TimeoutException:
         raise TimeoutError("OCR service timed out")
     except Exception as e:
-        raise RuntimeError(f"OCR service error: {e}")
+        raise RuntimeError(f"OCR error: {e}")
 
-def embed(
-    input_data: EmbedInput
-) -> Union[List[float], List[List[float]]]:
+
+def embed(input_data: EmbedInput) -> Union[List[float], List[List[float]]]:
     """
-    Generate embeddings using Qwen3-VL-Embedding (Text/Image/Multimodal).
-    
-    Input formats:
-    - Text: "Hello" or ["Hello", "World"]
-    - Image: {"image": "path/to/img.jpg"}
-    - Multimodal: {"text": "A cat", "image": "cat.jpg"}
-    
+    Generate embeddings (text, image, or multimodal).
+
     Args:
-        input_data: Input text, image, or multimodal data
-        
+        input_data: A string, list of strings, or dict(s) with text/image keys.
+
     Returns:
-        List[float]|List[List[float]]: Single embedding vector or list of vectors
-        
-    Raises:
-        FileNotFoundError: If image file doesn't exist
-        ConnectionError: If embedding service is unreachable
-        RuntimeError: If service returns an error
+        Single embedding vector, or list of vectors for batch input.
     """
-    logger.info(f"Embed request: {type(input_data).__name__}")
-    
+    logger.info(f"Embed: {type(input_data).__name__}")
     try:
         client = _get_client("embed")
-        model = SERVICES["embed"]["model"]
-        
-        # Normalize input to list
+
+        # Normalize to list
         if isinstance(input_data, (str, dict)):
             inputs = [input_data]
-            is_single = True
+            single = True
         else:
-            inputs = input_data
-            is_single = False
-            
-        # Process images in inputs if present (assuming dict format for multimodal)
-        processed_inputs = []
+            inputs = list(input_data)
+            single = False
+
+        # Convert local image paths to data URIs
+        processed = []
         for item in inputs:
             if isinstance(item, dict) and "image" in item:
-                 # If local path, convert to data URI because server might be remote/container
-                 # Ideally the server supports base64, usually it does.
-                 # Note: For embedding server, we often pass the dict directly if using OpenAI format?
-                 # Standard OpenAI embedding doesn't support dict input officially, 
-                 # but vLLM VL embedding does. We assume it handles data URIs or paths.
-                 # Let's ensure paths are converted to data URIs if they are local files.
-                 item_copy = item.copy()
-                 if os.path.exists(item["image"]):
-                      item_copy["image"] = _process_image(item["image"])
-                 processed_inputs.append(item_copy)
+                cp = item.copy()
+                if os.path.exists(item["image"]):
+                    cp["image"] = _process_image(item["image"])
+                processed.append(cp)
             else:
-                processed_inputs.append(item)
+                processed.append(item)
 
-        response = client.embeddings.create(model=model, input=processed_inputs)
-        embeddings = [d.embedding for d in response.data]
-        
-        result = embeddings[0] if is_single else embeddings
-        logger.debug(f"Embed response: {len(result) if is_single else f'{len(result)} vectors'}")
-        return result
-        
+        resp = client.embeddings.create(model=_model("embed"), input=processed)
+        vecs = [d.embedding for d in resp.data]
+        return vecs[0] if single else vecs
+
     except httpx.ConnectError as e:
-        raise ConnectionError(f"Cannot connect to embedding service: {e}")
+        raise ConnectionError(f"Embedding service unreachable: {e}")
     except httpx.TimeoutException:
         raise TimeoutError("Embedding service timed out")
     except Exception as e:
-        raise RuntimeError(f"Embedding service error: {e}")
+        raise RuntimeError(f"Embedding error: {e}")
+
 
 def transcribe(
     audio: Union[str, Path],
     language: Optional[str] = None,
-    timestamps: Optional[Literal["word", "segment"]] = None
+    timestamps: Optional[Literal["word", "segment"]] = None,
 ) -> Dict[str, Any]:
     """
-    Transcribe audio using Qwen3-ASR.
-    
+    Transcribe audio to text.
+
     Args:
-        audio (str|Path): Path to audio file
-        language (str, optional): Language code (e.g., "en", "zh")
-        timestamps (Literal["word", "segment"], optional): Request word or segment timestamps
-        
+        audio:      Path to audio file (.wav, .mp3, .flac).
+        language:   Language code (e.g. "en", "zh").
+        timestamps: Request word- or segment-level timestamps.
+
     Returns:
-        Dict[str, Any]: Dictionary with 'text' and optional 'chunks'/'words' if timestamps requested
-        
-    Raises:
-        FileNotFoundError: If audio file doesn't exist
-        ConnectionError: If ASR service is unreachable
-        RuntimeError: If service returns an error
+        Dict with 'text' key; includes timestamp data if requested.
     """
     path = Path(audio)
     if not path.exists():
         raise FileNotFoundError(f"Audio not found: {audio}")
-        
-    logger.info(f"ASR request: {path.name}" + (f", language: {language}" if language else ""))
-    
+    logger.info(f"ASR: {path.name}" + (f", lang={language}" if language else ""))
+
     try:
-        # Qwen3-ASR via vLLM OpenAI API usually uses the standard /v1/audio/transcriptions
-        # But for complex timestamp params, sometimes direct requests are safer if the client lib creates issues.
-        # We will use standard OpenAI client first.
         client = _get_client("asr")
-        model = SERVICES["asr"]["model"]
-        
-        with open(path, "rb") as f:
-            # Note: openai-python doesn't fully support all extra params for all backends
-            # but let's try standard create.
-            kwargs = {}
-            if language: kwargs["language"] = language
-            if timestamps: kwargs["timestamp_granularities"] = [timestamps] # List format for standard API
-            
-            response = client.audio.transcriptions.create(
-                model=model,
-                file=f,
-                response_format="verbose_json" if timestamps else "json",
-                **kwargs
-            )
-        
-        # Unpack response object to dict
+        kwargs: Dict[str, Any] = {}
+        if language:
+            kwargs["language"] = language
         if timestamps:
-            result = response.model_dump()
-        else:
-            result = {"text": response.text}
-            
-        logger.debug(f"ASR response: {len(result.get('text', ''))} chars")
-        return result
-        
+            kwargs["timestamp_granularities"] = [timestamps]
+
+        with open(path, "rb") as f:
+            resp = client.audio.transcriptions.create(
+                model=_model("asr"), file=f,
+                response_format="verbose_json" if timestamps else "json",
+                **kwargs,
+            )
+        return resp.model_dump() if timestamps else {"text": resp.text}
+
     except httpx.ConnectError as e:
-        raise ConnectionError(f"Cannot connect to ASR service: {e}")
+        raise ConnectionError(f"ASR service unreachable: {e}")
     except httpx.TimeoutException:
         raise TimeoutError("ASR service timed out")
     except Exception as e:
-        raise RuntimeError(f"ASR service error: {e}")
+        raise RuntimeError(f"ASR error: {e}")
+
 
 # =============================================================================
-# HELPERS
+# HEALTH CHECK
 # =============================================================================
 
-def _process_image(image: Union[str, Path]) -> str:
-    """Convert image path/url to base64 data URI or return as-is."""
-    image_str = str(image)
-    if image_str.startswith(("http://", "https://", "data:")):
-        return image_str
-        
-    path = Path(image)
-    if not path.exists():
-        raise FileNotFoundError(f"Image not found: {image}")
-        
-    mime_type = "image/jpeg"
-    if path.suffix.lower() == ".png": mime_type = "image/png"
-    elif path.suffix.lower() == ".webp": mime_type = "image/webp"
-    
-    with open(path, "rb") as f:
-        data = base64.b64encode(f.read()).decode("utf-8")
-        return f"data:{mime_type};base64,{data}"
-
-def health_check() -> Dict[str, bool]:
+def health_check() -> Dict[str, Any]:
     """
-    Check health status of all services.
-    
+    Check health of the gateway and all backend services.
+
     Returns:
-        Dict[str, bool]: Health status for each service
+        Dict mapping service name → bool (healthy or not).
     """
-    status = {}
-    for service_name in SERVICES.keys():
+    status: Dict[str, Any] = {}
+
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"{GATEWAY_URL}/health", timeout=5)
+        status["gateway"] = True
+    except Exception as e:
+        status["gateway"] = False
+        logger.warning(f"Gateway unhealthy: {e}")
+        return status  # No point checking backends
+
+    for svc in MODELS:
         try:
-            client = _get_client(service_name)
-            # Simple health check - try to get model info
-            response = client.models.list()
-            status[service_name] = True
-            logger.debug(f"{service_name} service is healthy")
+            _get_client(svc).models.list()
+            status[svc] = True
         except Exception as e:
-            status[service_name] = False
-            logger.warning(f"{service_name} service is unhealthy: {e}")
-    
+            status[svc] = False
+            logger.warning(f"{svc} unhealthy: {e}")
+
     return status
 
+
+# =============================================================================
+# CLI
+# =============================================================================
+
 if __name__ == "__main__":
-    print("LiteLLM Client (Direct Mode)")
-    print(f"Chat:  Port {SERVICES['chat']['port']} ({SERVICES['chat']['model']})")
-    print(f"OCR:   Port {SERVICES['ocr']['port']} ({SERVICES['ocr']['model']})")
-    print(f"Embed: Port {SERVICES['embed']['port']} ({SERVICES['embed']['model']})")
-    print(f"ASR:   Port {SERVICES['asr']['port']} ({SERVICES['asr']['model']})")
-    
-    # Show health status
-    print("\nHealth Check:")
-    statuses = health_check()
-    for service, healthy in statuses.items():
-        status_str = "✅ UP" if healthy else "❌ DOWN"
-        print(f"  {service}: {status_str}")
+    print(f"LiteLLM Client — Gateway: {GATEWAY_URL}")
+    for svc, alias in MODELS.items():
+        print(f"  {svc:6s} → model=\"{alias}\"")
+
+    print("\nHealth:")
+    for svc, ok in health_check().items():
+        print(f"  {svc:8s} {'OK' if ok else 'DOWN'}")
