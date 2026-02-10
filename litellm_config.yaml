@@ -1,0 +1,131 @@
+# =============================================================================
+# LiteLLM Gateway Configuration
+# =============================================================================
+# Unified OpenAI-compatible gateway for all local vLLM services.
+# Each model is registered with both a friendly alias and its full HuggingFace name.
+#
+# Usage:
+#   model="chat"      → Qwen3-VL-4B-Instruct-FP8  (chat/vision)
+#   model="ocr"       → GLM-OCR                    (image text extraction)
+#   model="embedding"  → Qwen3-VL-Embedding-2B-FP8  (multimodal embeddings)
+#   model="asr"       → Qwen3-ASR-1.7B             (speech-to-text)
+#
+# Full model names also work:
+#   model="Qwen/Qwen3-VL-4B-Instruct-FP8"
+#   model="zai-org/GLM-OCR"
+#   model="shigureui/Qwen3-VL-Embedding-2B-FP8"
+#   model="Qwen/Qwen3-ASR-1.7B"
+# =============================================================================
+
+model_list:
+
+  # ─── Chat / Vision (Port 8070) ──────────────────────────────────────────────
+  - model_name: chat
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-VL-4B-Instruct-FP8
+      api_base: http://localhost:8070/v1
+      api_key: not-needed
+      supports_response_schema: true
+      stream_timeout: 120
+    model_info:
+      mode: chat
+      supports_vision: true
+      supports_function_calling: true
+      supports_parallel_function_calling: false
+
+  - model_name: Qwen/Qwen3-VL-4B-Instruct-FP8
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-VL-4B-Instruct-FP8
+      api_base: http://localhost:8070/v1
+      api_key: not-needed
+      supports_response_schema: true
+    model_info:
+      mode: chat
+      supports_vision: true
+
+  # ─── OCR (Port 8080) ───────────────────────────────────────────────────────
+  - model_name: ocr
+    litellm_params:
+      model: hosted_vllm/zai-org/GLM-OCR
+      api_base: http://localhost:8080/v1
+      api_key: not-needed
+    model_info:
+      mode: chat
+      supports_vision: true
+
+  - model_name: zai-org/GLM-OCR
+    litellm_params:
+      model: hosted_vllm/zai-org/GLM-OCR
+      api_base: http://localhost:8080/v1
+      api_key: not-needed
+    model_info:
+      mode: chat
+      supports_vision: true
+
+  # ─── Embeddings (Port 8090) ─────────────────────────────────────────────────
+  - model_name: embedding
+    litellm_params:
+      model: hosted_vllm/shigureui/Qwen3-VL-Embedding-2B-FP8
+      api_base: http://localhost:8090/v1
+      api_key: not-needed
+    model_info:
+      mode: embedding
+
+  - model_name: shigureui/Qwen3-VL-Embedding-2B-FP8
+    litellm_params:
+      model: hosted_vllm/shigureui/Qwen3-VL-Embedding-2B-FP8
+      api_base: http://localhost:8090/v1
+      api_key: not-needed
+    model_info:
+      mode: embedding
+
+  # ─── ASR / Speech-to-Text (Port 8000) ──────────────────────────────────────
+  # Uses hosted_vllm/ prefix — LiteLLM supports /audio/transcriptions for vLLM
+  - model_name: asr
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-ASR-1.7B
+      api_base: http://localhost:8000/v1
+      api_key: not-needed
+    model_info:
+      mode: audio_transcription
+
+  - model_name: Qwen/Qwen3-ASR-1.7B
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-ASR-1.7B
+      api_base: http://localhost:8000/v1
+      api_key: not-needed
+    model_info:
+      mode: audio_transcription
+
+# =============================================================================
+# Router Settings
+# =============================================================================
+router_settings:
+  routing_strategy: simple-shuffle    # Single instance per model — just pass through
+  num_retries: 3                      # Retry failed requests up to 3 times
+  timeout: 300                        # 5 min global timeout
+  allowed_fails: 3                    # Failures before cooldown
+  cooldown_time: 30                   # Seconds to wait after cooldown trigger
+  retry_after: 5                      # Seconds between retries
+
+# =============================================================================
+# LiteLLM Settings
+# =============================================================================
+litellm_settings:
+  drop_params: true                   # Drop unsupported params instead of erroring
+  request_timeout: 300                # 5 min — accommodates large audio/image payloads
+  telemetry: false                    # No telemetry sent to LiteLLM servers
+  num_retries: 2                      # SDK-level retries
+  cache: true                         # Enable response caching
+  cache_params:
+    type: local                       # In-memory cache (no Redis needed)
+    ttl: 3600                         # 1 hour TTL
+
+# =============================================================================
+# General Settings
+# =============================================================================
+general_settings:
+  # master_key: sk-litellm-master-key # Uncomment to require API key for all requests
+  store_model_in_db: false            # No database — config file only
+  max_request_size_mb: 100            # Large enough for audio/image uploads
+  allow_user_auth: false              # No user auth (local-only setup)
