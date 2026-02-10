@@ -129,3 +129,15 @@ general_settings:
   store_model_in_db: false            # No database — config file only
   max_request_size_mb: 100            # Large enough for audio/image uploads
   allow_user_auth: false              # No user auth (local-only setup)
+
+  # ── Pass-through: multimodal embeddings ───────────────────────────────────
+  # vLLM's multimodal embedding API uses a non-standard `messages` field
+  # (EmbeddingChatRequest) instead of the OpenAI `input` field.
+  # LiteLLM's standard embedding proxy only forwards `input`, so multimodal
+  # requests must be passed through directly to vLLM.
+  # Clients POST to GATEWAY/embeddings/v1/embeddings with the vLLM-native format.
+  pass_through_endpoints:
+    - path: "/embeddings"
+      target: "http://localhost:8090"
+      forward_headers: true
+      include_subpath: true

@@ -12,11 +12,12 @@ Usage:
     litellm_client.ocr("invoice.png")
     litellm_client.embed("search query")
     litellm_client.embed(["batch", "of", "texts"])
+    litellm_client.embed({"text": "describe this", "image": "photo.png"})
     litellm_client.transcribe("meeting.wav")
 
 Environment variables:
-    GATEWAY_URL  — Gateway base URL (default: http://localhost:8400)
-    GATEWAY_KEY  — API key if master_key is set (default: not-needed)
+    GATEWAY_URL      — Gateway base URL (default: http://localhost:8400)
+    GATEWAY_KEY      — API key if master_key is set (default: not-needed)
 """
 
 __all__ = [
@@ -49,6 +50,9 @@ logger = logging.getLogger(__name__)
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8400")
 GATEWAY_KEY = os.getenv("GATEWAY_KEY", "not-needed")
 
+# Embedding model name — must match the HuggingFace model served by vLLM on :8090
+_EMBED_MODEL = "shigureui/Qwen3-VL-Embedding-2B-FP8"
+
 # Model aliases — must match litellm_config.yaml model_name entries
 MODELS = {
     "chat": "chat",           # → Qwen/Qwen3-VL-4B-Instruct-FP8 on :8070
@@ -75,6 +79,9 @@ EmbedInput = Union[
     TextEmbedInput, List[TextEmbedInput],
     MultimodalEmbedInput, List[MultimodalEmbedInput],
 ]
+
+# Pass-through endpoint for embeddings (routes directly to vLLM via gateway)
+_EMBED_URL = f"{GATEWAY_URL}/embeddings/v1/embeddings"
 
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -257,6 +264,15 @@ def embed(input_data: EmbedInput) -> Union[List[float], List[List[float]]]:
     """
     Generate embeddings (text, image, or multimodal).
 
+    All requests are routed through the LiteLLM gateway's pass-through
+    endpoint, which forwards them to vLLM unchanged.
+
+    - **Text-only** batches use the standard ``input`` field (supports
+      multiple strings in a single request for efficiency).
+    - **Multimodal** items (dict with ``image`` key) use vLLM's
+      ``messages`` field (one request per item, since the chat-embedding
+      format does not support multi-sequence batching).
+
     Args:
         input_data: A string, list of strings, or dict(s) with text/image keys.
 
@@ -269,30 +285,63 @@ def embed(input_data: EmbedInput) -> Union[List[float], List[List[float]]]:
         RuntimeError:    Any other API error.
     """
     logger.info("Embed: %s", type(input_data).__name__)
+
+    # Normalize to list
+    if isinstance(input_data, (str, dict)):
+        inputs = [input_data]
+        single = True
+    else:
+        inputs = list(input_data)
+        single = False
+
+    has_multimodal = any(isinstance(item, dict) and "image" in item for item in inputs)
+
     try:
-        client = _get_client()
-
-        # Normalize to list
-        if isinstance(input_data, (str, dict)):
-            inputs = [input_data]
-            single = True
-        else:
-            inputs = list(input_data)
-            single = False
-
-        # Convert local image paths to data URIs
-        processed = []
-        for item in inputs:
-            if isinstance(item, dict) and "image" in item:
-                cp = item.copy()
-                if os.path.exists(item["image"]):
-                    cp["image"] = _process_image(item["image"])
-                processed.append(cp)
+        with httpx.Client(timeout=_TIMEOUT) as http:
+            if not has_multimodal:
+                # ── Text-only: single batched request with `input` field ──
+                texts = [item if isinstance(item, str) else item["text"] for item in inputs]
+                payload = {
+                    "model": _EMBED_MODEL,
+                    "input": texts,
+                    "encoding_format": "float",
+                }
+                resp = http.post(_EMBED_URL, json=payload)
+                resp.raise_for_status()
+                vecs = [d["embedding"] for d in resp.json()["data"]]
             else:
-                processed.append(item)
+                # ── Multimodal: per-item requests with `messages` field ──
+                vecs = []
+                for item in inputs:
+                    if isinstance(item, str):
+                        user_content: List[Dict[str, Any]] = [{"type": "text", "text": item}]
+                    elif isinstance(item, dict):
+                        user_content = []
+                        if "image" in item:
+                            user_content.append({
+                                "type": "image_url",
+                                "image_url": {"url": _process_image(item["image"])},
+                            })
+                        user_content.append({"type": "text", "text": item.get("text", "")})
+                    else:
+                        raise ValueError(f"Unsupported embed input type: {type(item)}")
 
-        resp = client.embeddings.create(model=_model("embed"), input=processed)
-        vecs = [d.embedding for d in resp.data]
+                    payload = {
+                        "model": _EMBED_MODEL,
+                        "messages": [
+                            {"role": "system", "content": [{"type": "text", "text": "You are a helpful assistant."}]},
+                            {"role": "user", "content": user_content},
+                            {"role": "assistant", "content": [{"type": "text", "text": ""}]},
+                        ],
+                        "encoding_format": "float",
+                        "continue_final_message": True,
+                        "add_special_tokens": True,
+                    }
+                    logger.debug("Multimodal embed → %s", _EMBED_URL)
+                    resp = http.post(_EMBED_URL, json=payload)
+                    resp.raise_for_status()
+                    vecs.append(resp.json()["data"][0]["embedding"])
+
         return vecs[0] if single else vecs
 
     except httpx.ConnectError as e:
@@ -300,6 +349,8 @@ def embed(input_data: EmbedInput) -> Union[List[float], List[List[float]]]:
     except httpx.TimeoutException as e:
         raise TimeoutError("Embedding service timed out") from e
     except Exception as e:
+        if isinstance(e, (ConnectionError, TimeoutError)):
+            raise
         raise RuntimeError(f"Embedding error: {e}") from e
 
 

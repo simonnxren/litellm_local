@@ -109,14 +109,15 @@ docker compose -f docker-compose.vllm_cu130_nightly.yml down
 ## Key Features & Enhancements
 
 ### Client SDK (`litellm_client.py`)
-- **Gateway-Only**: All requests route through LiteLLM gateway
+- **Gateway-Only**: All requests (chat, OCR, embeddings, ASR) route through the LiteLLM gateway
+- **Unified Embedding Endpoint**: Text and multimodal embeddings use a single gateway pass-through endpoint (`/embeddings/v1/embeddings`) that forwards requests directly to vLLM
 - **Environment Variable Configuration**: Gateway URL and API key configurable via env vars
 - **Robust Error Handling**: Specific exceptions for different failure modes
 - **Comprehensive Logging**: Structured logging with INFO/DEBUG levels
 - **Type Safety**: TypedDict definitions and proper type hints
 - **Health Checks**: Built-in service status monitoring
 - **Streaming Support**: Async streaming for chat completions
-- **Batch Operations**: Efficient batch processing for embeddings
+- **Batch Operations**: Efficient batch processing for text embeddings
 
 ### Testing Framework
 - **Unified Test Suite**: Single file (`test_gateway.py`) with real media assets from `assets/`
@@ -127,6 +128,7 @@ docker compose -f docker-compose.vllm_cu130_nightly.yml down
 ### Recent Improvements
 - ✅ **Gateway-Only Architecture**: All SDK requests route through LiteLLM gateway (no direct mode)
 - ✅ **LiteLLM Gateway**: Unified API on port 8400 with model aliasing, caching, retries, and logging
+- ✅ **Unified Embedding Endpoint**: Pass-through endpoint routes both text and multimodal embeddings through gateway to vLLM
 - ✅ **Full Embedding Functionality Restored**: Added `--runner pooling` flag for proper 2048-dimensional embeddings
 - ✅ **Real Asset Testing**: Tests use actual screenshots and audio files from `assets/`
 - ✅ **Production Ready**: Proper error handling, logging, and configuration
@@ -150,7 +152,7 @@ These were discovered and resolved during development:
 ## Coding Conventions
 
 - **Docker images**: Use `vllm/vllm-openai:cu130-nightly` for Blackwell compatibility
-- **Gateway-only**: All client requests go through LiteLLM gateway on :8400
+- **Gateway-only**: All client requests go through LiteLLM gateway on :8400 (embeddings use a pass-through endpoint)
 - **Environment variables**: `GATEWAY_URL`, `GATEWAY_KEY` for SDK config
 - **GPU allocation**: Dynamic via `--gpu-memory-utilization` (0.0-1.0 fraction)
 - **Service dependencies**: Sequential startup with health checks via `depends_on`
