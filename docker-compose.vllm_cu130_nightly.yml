@@ -3,10 +3,13 @@
 # Services:
 #   glm-ocr           :8080  OCR (zai-org/GLM-OCR, FP8)
 #   qwen3-vl-embedding :8090  Embeddings (Qwen3-VL-Embedding-2B-FP8, pooling)
-#   qwen3-asr          :8000  ASR (Qwen3-ASR-1.7B, FP8)
+#   qwen3-asr          :8000  ASR (Qwen3-ASR-1.7B + ForcedAligner for timestamps)
 #   qwen3-vl-4b        :8070  Chat/Vision (Qwen3-VL-4B-Instruct-FP8)
 #
 # Run with: docker compose -f docker-compose.vllm_cu130_nightly.yml up -d
+#
+# Note: qwen3-asr now includes ForcedAligner for word-level timestamp prediction.
+#       Build the image first with: docker build -f Dockerfile.asr-forced-aligner -t qwen3-asr-forced-aligner:latest .
 
 services:
   glm-ocr:
@@ -113,35 +116,26 @@ services:
     stop_grace_period: 30s
 
   qwen3-asr:
-    image: vllm/vllm-openai:cu130-nightly
+    build:
+      context: .
+      dockerfile: Dockerfile.asr-forced-aligner
+    image: qwen3-asr-forced-aligner:latest
     container_name: qwen3-asr
     depends_on:
       qwen3-vl-embedding:
         condition: service_healthy
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        rm -f /usr/local/cuda/compat/libcuda.so* && ldconfig && \
-        pip install librosa soundfile && \
-        pip install https://github.com/huggingface/transformers/archive/refs/heads/main.zip && \
-        python3 -m vllm.entrypoints.openai.api_server \
-        --model Qwen/Qwen3-ASR-1.7B \
-        --trust-remote-code \
-        --quantization fp8 \
-        --kv-cache-dtype fp8 \
-        --gpu-memory-utilization 0.2 \
-        --max-model-len 7000 \
-        --enforce-eager \
-        --host 0.0.0.0 \
-        --port 8000 \
-        --allowed-local-media-path /
     ports:
       - "0.0.0.0:8000:8000"
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
+      - /tmp:/tmp:ro
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - HF_HOME=/root/.cache/huggingface
+      - ASR_MODEL=Qwen/Qwen3-ASR-1.7B
+      - FORCED_ALIGNER_MODEL=Qwen/Qwen3-ForcedAligner-0.6B
+      - ASR_HOST=0.0.0.0
+      - ASR_PORT=8000
     deploy:
       resources:
         reservations:
@@ -154,7 +148,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 180s
+      start_period: 300s
     restart: unless-stopped
     ipc: host
     shm_size: '4gb'

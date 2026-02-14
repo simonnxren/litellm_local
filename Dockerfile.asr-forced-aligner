@@ -1,0 +1,291 @@
+# Dockerfile for Qwen3-ASR with ForcedAligner support
+# Based on vllm/vllm-openai:cu130-nightly for RTX 5090 / Blackwell compatibility
+#
+# This image provides:
+# - Qwen3-ASR-1.7B (or 0.6B) model with ForcedAligner for timestamp prediction
+# - Custom API server with endpoints for transcription and word-level timestamps
+# - OpenAI-compatible API with extended timestamp endpoint
+#
+# Build: docker build -f Dockerfile.asr-forced-aligner -t qwen3-asr-forced-aligner:latest .
+# Run:   docker run --gpus all -p 8000:8000 -v ~/.cache/huggingface:/root/.cache/huggingface qwen3-asr-forced-aligner:latest
+#
+# API Endpoints:
+# - POST /v1/audio/transcriptions - Standard transcription
+# - POST /v1/audio/transcriptions/timestamps - Transcription with word-level timestamps
+# - GET  /health - Health check
+# - GET  /status - GPU metrics and system status
+# - GET  /v1/models - List available models
+
+FROM vllm/vllm-openai:cu130-nightly
+
+LABEL maintainer="litellm_local"
+LABEL description="Qwen3-ASR with ForcedAligner support on vLLM cu130-nightly"
+
+# Fix for Blackwell GPU compatibility - remove outdated libcuda.so
+RUN rm -f /usr/local/cuda/compat/libcuda.so* && ldconfig
+
+# Install additional dependencies for ASR and ForcedAligner
+# Note: We install qwen-asr WITHOUT [vllm] extra because the base image
+# already has vLLM cu130-nightly (0.15.2rc1). Installing qwen-asr[vllm]
+# would downgrade vLLM to 0.14.0 causing import errors.
+# Using --ignore-installed to handle distutils-installed packages (blinker)
+RUN pip install --no-cache-dir --ignore-installed \
+    blinker \
+    && pip install --no-cache-dir \
+    qwen-asr \
+    librosa \
+    soundfile \
+    fastapi \
+    uvicorn \
+    python-multipart \
+    && rm -rf /root/.cache/pip
+
+# Note: qwen-asr requires specific transformers version.
+# The package already pins transformers==4.57.6, so we don't need to install it separately.
+# Installing the latest dev version would break qwen-asr compatibility.
+
+# Set environment variables
+ENV CUDA_VISIBLE_DEVICES=0
+ENV VLLM_LOGGING_LEVEL=INFO
+ENV HF_HOME=/root/.cache/huggingface
+ENV PYTHONUNBUFFERED=1
+
+# Model configuration
+ENV ASR_MODEL=Qwen/Qwen3-ASR-1.7B
+ENV FORCED_ALIGNER_MODEL=Qwen/Qwen3-ForcedAligner-0.6B
+ENV ASR_PORT=8000
+ENV ASR_HOST=0.0.0.0
+
+# Create app directory and the ASR server Python file inline
+RUN mkdir -p /app && cat > /app/asr_forced_aligner_server.py << 'PYTHON_EOF'
+#!/usr/bin/env python3
+"""ASR + ForcedAligner API Server"""
+
+import os
+import tempfile
+from typing import Optional, List, Union
+from contextlib import asynccontextmanager
+
+import torch
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from pydantic import BaseModel
+import uvicorn
+
+# Global model instance
+asr_model = None
+
+# Configuration from environment
+ASR_MODEL = os.getenv("ASR_MODEL", "Qwen/Qwen3-ASR-1.7B")
+FORCED_ALIGNER_MODEL = os.getenv("FORCED_ALIGNER_MODEL", "Qwen/Qwen3-ForcedAligner-0.6B")
+ASR_PORT = int(os.getenv("ASR_PORT", "8000"))
+ASR_HOST = os.getenv("ASR_HOST", "0.0.0.0")
+
+
+class TranscriptionResponse(BaseModel):
+    text: str
+    language: Optional[str] = None
+    timestamps: Optional[List[List[Union[str, float]]]] = None
+    usage: Optional[dict] = None
+
+
+class ModelsResponse(BaseModel):
+    object: str = "list"
+    data: List[dict]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load models on startup."""
+    global asr_model
+    
+    print("=" * 50)
+    print("Loading Qwen3-ASR with ForcedAligner")
+    print("=" * 50)
+    print(f"ASR Model: {ASR_MODEL}")
+    print(f"ForcedAligner Model: {FORCED_ALIGNER_MODEL}")
+    
+    try:
+        from qwen_asr import Qwen3ASRModel
+        
+        print("Loading models... This may take a few minutes.")
+        asr_model = Qwen3ASRModel.from_pretrained(
+            ASR_MODEL,
+            dtype=torch.bfloat16,
+            device_map="cuda:0",
+            max_inference_batch_size=32,
+            max_new_tokens=256,
+            forced_aligner=FORCED_ALIGNER_MODEL,
+            forced_aligner_kwargs=dict(
+                dtype=torch.bfloat16,
+                device_map="cuda:0",
+            ),
+        )
+        print("Models loaded successfully!")
+        
+    except Exception as e:
+        print(f"Error loading models: {e}")
+        raise
+    
+    yield
+    
+    print("Shutting down...")
+
+
+app = FastAPI(
+    title="Qwen3-ASR with ForcedAligner",
+    description="ASR API with timestamp support via ForcedAligner",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    if asr_model is None:
+        raise HTTPException(status_code=503, detail="Models not loaded")
+    return {"status": "healthy", "models": {"asr": ASR_MODEL, "forced_aligner": FORCED_ALIGNER_MODEL}}
+
+
+@app.get("/status")
+async def status():
+    """GPU and system status endpoint."""
+    import torch
+    
+    gpu_info = {}
+    if torch.cuda.is_available():
+        gpu_info = {
+            "device_count": torch.cuda.device_count(),
+            "current_device": torch.cuda.current_device(),
+            "device_name": torch.cuda.get_device_name(0),
+            "memory": {
+                "allocated_gb": round(torch.cuda.memory_allocated() / 1e9, 2),
+                "reserved_gb": round(torch.cuda.memory_reserved() / 1e9, 2),
+                "max_allocated_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2),
+                "total_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 2),
+            }
+        }
+    
+    return {
+        "models": {
+            "asr": ASR_MODEL,
+            "forced_aligner": FORCED_ALIGNER_MODEL,
+            "loaded": asr_model is not None,
+        },
+        "gpu": gpu_info,
+        "pytorch_version": torch.__version__,
+        "cuda_available": torch.cuda.is_available(),
+    }
+
+
+@app.get("/v1/models")
+async def list_models():
+    """List available models."""
+    return ModelsResponse(
+        data=[{
+            "id": ASR_MODEL,
+            "object": "model",
+            "created": 1700000000,
+            "owned_by": "qwen",
+            "root": ASR_MODEL,
+        }]
+    )
+
+
+@app.post("/v1/audio/transcriptions", response_model=TranscriptionResponse)
+async def transcribe(
+    file: UploadFile = File(...),
+    model: str = Form(ASR_MODEL),
+    language: Optional[str] = Form(None),
+):
+    """Standard transcription without timestamps."""
+    if asr_model is None:
+        raise HTTPException(status_code=503, detail="ASR model not loaded")
+    
+    try:
+        audio_bytes = await file.read()
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}") as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        
+        results = asr_model.transcribe(
+            audio=tmp_path,
+            language=language,
+            return_time_stamps=False,
+        )
+        
+        result = results[0]
+        os.unlink(tmp_path)
+        
+        return TranscriptionResponse(
+            text=result.text,
+            language=result.language if hasattr(result, 'language') else None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+@app.post("/v1/audio/transcriptions/timestamps", response_model=TranscriptionResponse)
+async def transcribe_with_timestamps(
+    file: UploadFile = File(...),
+    model: str = Form(ASR_MODEL),
+    language: Optional[str] = Form(None),
+):
+    """Transcription with word-level timestamps using ForcedAligner."""
+    if asr_model is None:
+        raise HTTPException(status_code=503, detail="ASR model not loaded")
+    
+    try:
+        audio_bytes = await file.read()
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}") as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        
+        results = asr_model.transcribe(
+            audio=tmp_path,
+            language=language,
+            return_time_stamps=True,
+        )
+        
+        result = results[0]
+        
+        # Format timestamps - ForcedAlignItem has: text, start_time, end_time
+        timestamps = None
+        if hasattr(result, 'time_stamps') and result.time_stamps:
+            timestamps = []
+            for item in result.time_stamps:
+                if hasattr(item, 'text') and hasattr(item, 'start_time') and hasattr(item, 'end_time'):
+                    timestamps.append([item.text, float(item.start_time), float(item.end_time)])
+                elif isinstance(item, (list, tuple)) and len(item) >= 3:
+                    timestamps.append([item[0], float(item[1]), float(item[2])])
+        
+        os.unlink(tmp_path)
+        
+        return TranscriptionResponse(
+            text=result.text,
+            language=result.language if hasattr(result, 'language') else None,
+            timestamps=timestamps,
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription with timestamps failed: {str(e)}")
+
+
+if __name__ == "__main__":
+    print(f"Starting ASR + ForcedAligner Server on {ASR_HOST}:{ASR_PORT}")
+    uvicorn.run(app, host=ASR_HOST, port=ASR_PORT, log_level="info")
+PYTHON_EOF
+
+# Expose the ASR service port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=300s --retries=5 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Override the base image's entrypoint and run the custom ASR server
+ENTRYPOINT []
+CMD ["python3", "/app/asr_forced_aligner_server.py"]
