@@ -1,0 +1,163 @@
+# =============================================================================
+# LiteLLM Gateway Configuration
+# =============================================================================
+# Unified OpenAI-compatible gateway for all local vLLM services.
+# Built-in LiteLLM models are defined in model_list; OCR/ASR/embeddings are
+# routed via pass-through endpoints to preserve backend request/response shapes.
+#
+# Usage:
+#   model="local_qwen3-vl-4b"                       (chat/vision)
+#   /api/ocr                                        (OCR VLM via pass-through)
+#   /api/embeddings                                 (multimodal + text embeddings via pass-through)
+#   /api/asr                                        (speech-to-text via pass-through)
+# =============================================================================
+
+model_list:
+
+  # ─── Local vLLM Models ─────────────────────────────────────────────────────
+
+  # Chat / Vision (Port 8070)
+  - model_name: local_qwen3-vl-4b
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-VL-4B-Instruct-FP8
+      api_base: http://localhost:8070/v1
+      api_key: not-needed
+      supports_response_schema: true
+      stream_timeout: 120
+    model_info:
+      mode: chat
+      supports_vision: true
+      supports_function_calling: true
+      supports_parallel_function_calling: false
+
+  # ─── External Providers ────────────────────────────────────────────────────
+
+  # DeepSeek
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_base: https://api.deepseek.com
+      api_key: os.environ/DEEPSEEK_API_KEY
+    model_info:
+      mode: chat
+
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_base: https://api.deepseek.com
+      api_key: os.environ/DEEPSEEK_API_KEY
+    model_info:
+      mode: chat
+
+  # Google Gemini
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY
+    model_info:
+      mode: chat
+      supports_vision: true
+
+  # Alibaba DashScope (OpenAI-compatible)
+  - model_name: qwen3.5-plus
+    litellm_params:
+      model: openai/qwen3.5-plus
+      api_base: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
+    model_info:
+      mode: chat
+      supports_vision: true
+
+  - model_name: qwen-turbo
+    litellm_params:
+      model: openai/qwen-turbo
+      api_base: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
+    model_info:
+      mode: chat
+
+
+# =============================================================================
+# Router Settings
+# =============================================================================
+router_settings:
+  routing_strategy: simple-shuffle    # Single instance per model — just pass through
+  num_retries: 3                      # Retry failed requests up to 3 times
+  timeout: 300                        # 5 min global timeout
+  allowed_fails: 3                    # Failures before cooldown
+  cooldown_time: 30                   # Seconds to wait after cooldown trigger
+  retry_after: 5                      # Seconds between retries
+  enable_pre_call_checks: true        # Validate requests before sending to backend
+
+# =============================================================================
+# LiteLLM Settings
+# =============================================================================
+litellm_settings:
+  drop_params: true                   # Drop unsupported params instead of erroring
+  request_timeout: 300                # 5 min — accommodates large audio/image payloads
+  stream_timeout: 120                 # 2 min for streaming responses
+  telemetry: false                    # No telemetry sent to LiteLLM servers
+  num_retries: 2                      # SDK-level retries
+  cache: true                         # Enable response caching
+  cache_params:
+    type: local                       # In-memory cache (no Redis needed)
+    ttl: 3600                         # 1 hour TTL
+
+# =============================================================================
+# General Settings
+# =============================================================================
+general_settings:
+  # master_key: sk-litellm-master-key # Uncomment to require API key for all requests
+  store_model_in_db: false            # No database — config file only
+  max_request_size_mb: 100            # Large enough for audio/image uploads
+  allow_user_auth: false              # No user auth (local-only setup)
+
+  # ── Pass-through: embeddings (pass-through only) ───────────────────────
+  # Embeddings are intentionally exposed only through pass-through.
+  # LiteLLM's built-in /v1/embeddings route is not configured in model_list.
+  # vLLM multimodal embeddings require the `messages` field.
+  # This pass-through routes GATEWAY/api/embeddings → vLLM /v1/embeddings
+  # directly, preserving the full request body.
+  pass_through_endpoints:
+    # ── Pass-through: Embeddings ───────────────────────────────────────────
+    - path: "/api/embeddings"
+      target: "http://localhost:8090/v1/embeddings"
+      forward_headers: true
+
+    - path: "/api/embeddings/models"
+      # Supports model discovery list:
+      # - GET /api/embeddings/models
+      target: "http://localhost:8090/v1/models"
+      forward_headers: true
+
+    # ── Pass-through: ASR (w/wo timestamps) ─────────────────────────────────
+    # Unified ASR endpoint; include timestamp_granularities[] for word-level
+    # alignment. This avoids LiteLLM transforming the backend response.
+    - path: "/api/asr"
+      target: "http://localhost:8060/v1/audio/transcriptions"
+      forward_headers: true
+
+    - path: "/api/asr/models"
+      target: "http://localhost:8060/v1/models"
+      forward_headers: true
+
+    # ── Pass-through: OCR VLM (OpenAI-compatible) ───────────────────────────
+    # OCR VLM is routed fully via pass-through (no built-in LiteLLM model).
+    - path: "/api/ocr"
+      target: "http://localhost:8118/v1/chat/completions"
+      forward_headers: true
+
+    - path: "/api/ocr/models"
+      target: "http://localhost:8118/v1/models"
+      forward_headers: true
+
+    # ── Pass-through: Paddle OCR document pipeline ──────────────────────────
+    # Expose Paddle OCR non-OpenAI endpoints through gateway so clients only
+    # need one base URL.
+    - path: "/api/ocr/layout-parsing"
+      target: "http://localhost:8080/layout-parsing"
+      forward_headers: true
+
+    - path: "/api/ocr/restructure-pages"
+      target: "http://localhost:8080/restructure-pages"
+      forward_headers: true
